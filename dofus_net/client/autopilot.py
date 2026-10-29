@@ -75,7 +75,7 @@ def pick_reply(replies):
 
 class Autopilot:
     def __init__(self, sess):
-        self.s = sess; self.on = False; self.goal = None; self.kinds = {"talk", "fight"}; self.llm = False; self.llm_steps = 0
+        self.s = sess; self.on = False; self.goal = None; self.kinds = {"talk", "fight"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0
         self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter()
 
     # ---- control ----
@@ -116,6 +116,11 @@ class Autopilot:
                 if self.s.in_fight: self.say("warn", "un combat est en cours (hors autopilote), arrêt"); break
                 if self.s.dialog: self._dialog(); continue
                 obj, why = self._pick()
+                if obj is None and time.time() - self._last_sync > 20:   # the server does not push the next step by itself: ask for the fresh state, once in a while
+                    self._last_sync = time.time()
+                    try: self.s.sync_quests()
+                    except Exception: pass
+                    time.sleep(0.5); obj, why = self._pick()
                 if obj is None:
                     if self.llm and self.llm_steps < MAX_LLM_STEPS and self._ask_guide(why): continue
                     self.say("info", why); break

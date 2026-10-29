@@ -114,7 +114,7 @@
  "quests": {
   "1632": {
    "name": "Le village dans les nuages",
-   "seen": 19,
+   "seen": 46,
    "steps": {
     "2252": {
      "name": "Le village dans les nuages",
@@ -130,7 +130,7 @@
   },
   "1639": {
    "name": "Transport peu commun",
-   "seen": 18,
+   "seen": 45,
    "steps": {
     "2259": {
      "name": "Transport peu commun",
@@ -158,7 +158,7 @@
   },
   "1643": {
    "name": "Champs de bataille",
-   "seen": 5,
+   "seen": 23,
    "steps": {
     "2263": {
      "name": "Champs de bataille",
@@ -166,14 +166,29 @@
       "9832": "Vaincre x1 Tofu Chimérique en un seul combat",
       "9833": "Vaincre x1 Pissenlit Miroitant en un seul combat",
       "9834": "Vaincre x1 Rose Vaporeuse en un seul combat",
-      "9835": "Vaincre x1 Tournesol Nébuleux en un seul combat"
+      "9835": "Vaincre x1 Tournesol Nébuleux en un seul combat",
+      "9836": "Retourner voir Capitaine des Kerubims"
+     }
+    }
+   }
+  },
+  "1644": {
+   "name": "Coups d'épée dans l'eau",
+   "seen": 5,
+   "steps": {
+    "2264": {
+     "name": "Coups d'épée dans l'eau",
+     "objectives": {
+      "9837": "Vaincre x2 Petit Gloot",
+      "9838": "Vaincre x2 Plikplok",
+      "9839": "Vaincre x1 Grand Splatch en un seul combat"
      }
     }
    }
   },
   "1649": {
    "name": "Produits naturels",
-   "seen": 18,
+   "seen": 45,
    "steps": {
     "2269": {
      "name": "Produits naturels",
@@ -187,7 +202,7 @@
   },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 18,
+   "seen": 45,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",
@@ -252,6 +267,39 @@
     25049
    ],
    "qid": 1642
+  },
+  "9837": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793306203,
+   "map": 153878786,
+   "monsters": [
+    4108,
+    4109
+   ],
+   "qid": 1644
+  },
+  "9838": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793306203,
+   "map": 153878786,
+   "monsters": [
+    4108,
+    4109
+   ],
+   "qid": 1644
+  },
+  "9839": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793306271,
+   "map": 153878528,
+   "monsters": [
+    4109,
+    4110
+   ],
+   "qid": 1644
   }
  },
  "version": 1
