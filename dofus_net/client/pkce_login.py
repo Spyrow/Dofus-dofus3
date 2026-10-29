@@ -12,7 +12,7 @@ out of git).  Provider names are not verified here ("ankama" is a guess; the lau
 chosen in its login UI).
 """
 import argparse, base64, hashlib, json, secrets, sys, threading, urllib.parse, urllib.request, webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 AUTH_URL = "https://auth.ankama.com/"
 CLIENT_ID = 102                       # ZAAP_GAME_ID in the launcher
@@ -44,7 +44,7 @@ def wait_for_code(timeout):
             self.wfile.write(b"OK, you can close this tab." if "code" in q else b"waiting for ?code=")
         def log_message(self, *a): pass
 
-    srv = HTTPServer(("127.0.0.1", PORT), H)
+    srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return box, done, srv
 
