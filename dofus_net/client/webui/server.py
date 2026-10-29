@@ -139,7 +139,7 @@ class H(BaseHTTPRequestHandler):
         elif m := re.fullmatch(r"/api/accounts/(\w+)/autopilot", p):
             sess = gamesession.session(m[1])
             if body.get("on"):
-                if not sess.auto.start(): return self._json({"error": "impossible : personnage non connecté ou autopilote déjà actif"}, 409)
+                if not sess.auto.start(body.get("kinds") if isinstance(body.get("kinds"), list) else None): return self._json({"error": "impossible : personnage non connecté ou autopilote déjà actif"}, 409)
             else: sess.auto.stop()
             self._json({"ok": True}, 202)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/attack", p):

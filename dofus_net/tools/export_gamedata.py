@@ -65,6 +65,9 @@ def main():
     out["scroll"] = {k: [v["rightMapId"], v["bottomMapId"], v["leftMapId"], v["topMapId"]] for k, v in table(dd, "mapscrollactions").items()}
     out["subareas"] = {k: [t(v["nameId"]), v["areaId"]] for k, v in table(dd, "subareas").items()}
     out["areas"] = {k: [t(v["nameId"]), v["superAreaId"]] for k, v in table(dd, "areas").items()}
+    sub_tab = table(dd, "subareas")
+    out["subarea_monsters"] = {k: v["monsters"] for k, v in sub_tab.items() if v.get("monsters")}   # subarea id -> monster ids living there
+    out["subarea_maps"] = {k: v["mapIds"] for k, v in sub_tab.items() if v.get("monsters")}
     out["superareas"] = {k: t(v["nameId"]) for k, v in table(dd, "superareas").items()}
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f: json.dump(out, f, ensure_ascii=False, separators=(",", ":"))

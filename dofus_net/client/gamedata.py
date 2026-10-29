@@ -63,6 +63,14 @@ def area_maps(map_id, limit=600):
     return out
 
 
+def monster_maps(monster_id):
+    """Maps of every subarea where `monster_id` lives (the monster can appear on any of them)."""
+    out = []
+    for sid, mons in data().get("subarea_monsters", {}).items():
+        if int(monster_id) in mons: out += data().get("subarea_maps", {}).get(sid, [])
+    return out
+
+
 def effect_text(effect_id, value):
     """'#1{{~1~2 à }}#2 Vitalité' + 5 -> '5 Vitalité' (second parameter dropped)."""
     d = get("effects", effect_id)

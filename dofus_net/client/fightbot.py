@@ -49,6 +49,17 @@ def monster_group(entry):
     return out
 
 
+def los_clear(m, a, b):
+    """True if no cell strictly between a and b blocks the line of sight (cells[i][1] == 0). Unknown map -> True."""
+    if not m: return True
+    (ax, ay), (bx, by) = gamemaps.to_xy(a), gamemaps.to_xy(b)
+    n = max(abs(bx - ax), abs(by - ay))
+    for i in range(1, n):
+        c = gamemaps.from_xy(round(ax + (bx - ax) * i / n), round(ay + (by - ay) * i / n))
+        if c is not None and not m["cells"][c][1]: return False
+    return True
+
+
 def dist(a, b):
     (ax, ay), (bx, by) = gamemaps.to_xy(a), gamemaps.to_xy(b)
     return abs(ax - bx) + abs(ay - by)
@@ -80,7 +91,16 @@ class Fight:
             sid = _vi(body, 2)
             if s64(_vi(body, 4)) == s.char_id and sid in ACK_IDS:
                 self._later(1.0 if _vi(body, 3) is None else 0.4, login.JST, f_varint(2, sid) + f_varint(3, 1))
-        elif t in (login.JTK, login.JSQ): self.cast_evt.set()
+        elif t == login.JTK: self.cast_evt.set()
+        elif t == login.JSQ:   # jsq {22: action id, 3: {2: victim}} -- action 103 is a death (seen when the last cast killed the monster)
+            self.cast_evt.set()
+            if _vi(body, 22) == 103:
+                sub = next((v for f, v in parse(body) if f == 3 and isinstance(v, bytes)), b"")
+                dead = s64(_vi(sub, 2))
+                if dead is not None and dead != s.char_id:
+                    self.dead.add(dead)
+                    with s._lock: s.actors.pop(dead, None)
+                    s.log("event", "Combat : ennemi vaincu")
         elif t == login.JWP: self.over.set()
 
     def _later(self, delay, name, body):
@@ -100,7 +120,7 @@ class Fight:
         time.sleep(1.0)
         s._send(login.JXJ, f_varint(1, 1)); say("prêt (jxj)")
         end = time.time() + FIGHT_TIMEOUT
-        while not self.over.is_set() and time.time() < end and s.status == "connected":
+        while not self.over.is_set() and time.time() < end and s.status == "connected" and not s._stop.is_set():
             if not self.my_turn.wait(1.0): continue
             self.my_turn.clear()
             time.sleep(0.8)   # the start-of-turn acknowledgements go out first
@@ -131,7 +151,7 @@ class Fight:
             if me is None or not enemies or self.over.is_set(): return
             tid = min(enemies, key=lambda a: dist(me, enemies[a])); tcell = enemies[tid]; d = dist(me, tcell)
             usable = [sp for sp in spells if sp["ap"] <= ap and (not sp["per_turn"] or casts.get(sp["id"], 0) < sp["per_turn"])]
-            reach = [sp for sp in usable if sp["min"] <= d <= sp["max"]]
+            reach = [sp for sp in usable if sp["min"] <= d <= sp["max"] and los_clear(s.mapdata(), me, tcell)]
             if reach:
                 sp = reach[0]; self.cast_evt.clear()
                 s._send(login.JSR, f_varint(1, sp["id"]) + f_varint(2, tcell)); say(f"{sp['name']} sur la case {tcell}")
