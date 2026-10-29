@@ -98,7 +98,8 @@ class Fight:
             if _vi(body, 22) == 103:
                 sub = next((v for f, v in parse(body) if f == 3 and isinstance(v, bytes)), b"")
                 dead = s64(_vi(sub, 2))
-                if dead is not None and dead != s.char_id:
+                if dead == s.char_id: s.log("event", "Combat : DÉFAITE, mon personnage est mort")
+                elif dead is not None:
                     self.dead.add(dead)
                     with s._lock: s.actors.pop(dead, None)
                     s.log("event", "Combat : ennemi vaincu")
@@ -142,38 +143,51 @@ class Fight:
         return out
 
     def _turn(self):
+        """One of my turns. A cast that gets no reaction only skips that target FOR THIS TURN (line of sight, a moved enemy...); an enemy
+        is only ever removed for good when the server announces its death."""
         import login
         s = self.s; say = lambda m: s.log("action", "Combat : " + m)
         ap, mp = s.stats.get(1, 6), s.stats.get(23, 3)
-        spells = self._spells(); casts = {}
+        spells = self._spells(); casts = {}; skipped = set(); moves_without_cast = 0
         say(f"mon tour ({ap} PA, {mp} PM)")
-        for _ in range(12):
+        for _ in range(14):
             with s._lock: me = s.my_cell; enemies = {a: c for a, c in s.actors.items() if a < 0 and a not in self.dead}
             if me is None or not enemies or self.over.is_set(): return
-            tid = min(enemies, key=lambda a: dist(me, enemies[a])); tcell = enemies[tid]; d = dist(me, tcell)
             usable = [sp for sp in spells if sp["ap"] <= ap and (not sp["per_turn"] or casts.get(sp["id"], 0) < sp["per_turn"])]
-            reach = [sp for sp in usable if sp["min"] <= d <= sp["max"] and los_clear(s.mapdata(), me, tcell)]
-            if reach:
-                sp = reach[0]; self.cast_evt.clear()
+            order = sorted(enemies, key=lambda a: dist(me, enemies[a]))
+            m = s.mapdata()
+            # 1. cast at the nearest enemy that a spell reaches (range + line of sight)
+            target = next(((a, sp) for a in order if a not in skipped for sp in usable
+                           if sp["min"] <= dist(me, enemies[a]) <= sp["max"] and los_clear(m, me, enemies[a])), None)
+            if target:
+                tid, sp = target; tcell = enemies[tid]; self.cast_evt.clear()
                 s._send(login.JSR, f_varint(1, sp["id"]) + f_varint(2, tcell)); say(f"{sp['name']} sur la case {tcell}")
-                if not self.cast_evt.wait(3): self.dead.add(tid); say(f"pas de réaction de {tid} : abandon de cette cible"); continue
-                ap -= sp["ap"]; casts[sp["id"]] = casts.get(sp["id"], 0) + 1; time.sleep(1.3); continue
-            if usable and mp > 0:   # walk toward the enemy
+                if not self.cast_evt.wait(3): skipped.add(tid); say(f"pas de réaction de {tid} ce tour-ci : cible écartée jusqu'à la fin du tour"); continue
+                ap -= sp["ap"]; casts[sp["id"]] = casts.get(sp["id"], 0) + 1; moves_without_cast = 0; time.sleep(1.3); continue
+            if not usable: return
+            # 2. walk toward the nearest enemy (diagonal steps only)
+            tid = order[0]; tcell = enemies[tid]
+            if mp > 0 and moves_without_cast < 3:
                 rng = max(sp["max"] for sp in usable)
                 blocked = {c for a, c in s.actors.items() if a != s.char_id}
-                path = gamemaps.find_path(s.mapdata(), me, tcell, blocked, diagonals_only=True)   # fights allow diagonal steps only
-                if not path or len(path) < 3: return
+                path = gamemaps.find_path(m, me, tcell, blocked, diagonals_only=True)
                 steps = []
-                for c in path[1:-1][:mp]:
+                for c in (path or [])[1:-1][:mp]:
                     steps.append(c)
-                    if dist(c, tcell) <= rng: break
-                if not steps: return
-                walk = [me] + steps; s._moved.clear(); t0 = time.time()
-                keys = gamemaps.movement_keys(walk)
-                s._send(login.JOK, f_bytes(1, b"".join(enc_varint(k) for k in keys)) + f_varint(2, s.map_id))
-                say(f"déplacement de {len(steps)} case(s) vers {tid} : de {me} à {steps[-1]} (clés {[(k >> 12, k & 0xFFF) for k in keys]}, carte {s.map_id})")
-                if not s._moved.wait(3):
-                    got = sorted({str(t) for ts, t, _b in s.recent if ts >= t0 and t not in ("knb", None)})
-                    raise RuntimeError(f"déplacement refusé (le serveur a répondu : {', '.join(got) or 'rien'}; ma case selon le serveur ?)")
-                mp -= len(steps); time.sleep(gamemaps.STEP_SECONDS * len(steps) + 0.6); continue
+                    if dist(c, tcell) <= max(1, rng - 2): break   # a margin: stop a bit inside the range so that the line of sight is likelier
+                if steps:
+                    walk = [me] + steps; s._moved.clear(); t0 = time.time(); keys = gamemaps.movement_keys(walk)
+                    s._send(login.JOK, f_bytes(1, b"".join(enc_varint(k) for k in keys)) + f_varint(2, s.map_id))
+                    say(f"déplacement de {len(steps)} case(s) vers {tid} : de {me} à {steps[-1]}")
+                    if not s._moved.wait(3):
+                        got = sorted({str(t) for ts, t, _b in s.recent if ts >= t0 and t not in ("knb", None)})
+                        raise RuntimeError(f"déplacement refusé (le serveur a répondu : {', '.join(got) or 'rien'})")
+                    mp -= len(steps); moves_without_cast += 1; time.sleep(gamemaps.STEP_SECONDS * len(steps) + 0.6); continue
+            # 3. last resort: let the server judge a cast in range even if my line-of-sight estimate says no
+            blind = next(((a, sp) for a in order if a not in skipped for sp in usable if sp["min"] <= dist(me, enemies[a]) <= sp["max"]), None)
+            if blind:
+                tid, sp = blind; self.cast_evt.clear()
+                s._send(login.JSR, f_varint(1, sp["id"]) + f_varint(2, enemies[tid])); say(f"{sp['name']} sur la case {enemies[tid]} (sans ligne de vue estimée)")
+                if not self.cast_evt.wait(3): skipped.add(tid); continue
+                ap -= sp["ap"]; casts[sp["id"]] = casts.get(sp["id"], 0) + 1; time.sleep(1.3); continue
             return
