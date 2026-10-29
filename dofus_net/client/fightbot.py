@@ -95,6 +95,13 @@ class Fight:
         elif t == login.JTK: self.cast_evt.set()
         elif t == login.JSQ:   # jsq {22: action id, 3: {2: victim}} -- action 103 is a death (seen when the last cast killed the monster)
             self.cast_evt.set()
+            if _vi(body, 22) == 5:   # slide / charge: {5: {1: actor, 2: previous cell, 3: new cell}} -- the monsters that charge end up next to us
+                sub = next((v for f, v in parse(body) if f == 5 and isinstance(v, bytes)), b"")
+                who, dest = s64(_vi(sub, 1)), _vi(sub, 3)
+                if who is not None and dest is not None and 0 <= dest < 560:
+                    with s._lock:
+                        s.actors[who] = dest
+                        if who == s.char_id: s.my_cell = dest
             if _vi(body, 22) == 103:
                 sub = next((v for f, v in parse(body) if f == 3 and isinstance(v, bytes)), b"")
                 dead = s64(_vi(sub, 2))

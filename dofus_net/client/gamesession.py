@@ -7,7 +7,7 @@ closed (a second session on the same account kicks the first, in both directions
 
 Chat: the chat messages are NOT decoded yet (none in the captures so far): `Session.chat` stays empty until gamestate
 learns the message; see add_chat()."""
-import collections, threading, time
+import collections, json, os, threading, time
 import accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, autopilot, fightbot, questbook, login
 from wire import parse, dec_varint, enc_varint, f_bytes, f_varint, request
 from haapi import create_game_token, GAME_IDS
@@ -37,6 +37,7 @@ class Session:
         self.groups = {}; self.stats = {}; self.spell_ids = []; self.fight = fightbot.Fight(self)   # monster groups {actor: [monster ids]}
         self.elements = {}   # interactive elements of the current map (from jnj)
         self.in_fight = False; self.auto = autopilot.Autopilot(self)
+        self._trace = None   # list of (time, 'S'|'C', message, hex) while a fight is being recorded (see _do_attack)
         self._icj_events = {}; self._dlg = None; self._done = collections.deque(maxlen=60)   # dialog being recorded; (time, quest, objective) accomplished lately
         self.npcs = {}; self.quests = {}; self.dialog = None   # actor id -> template id; quest id -> (step, objectives); open dialog
         self._dialog_event = threading.Event(); self.recent = collections.deque(maxlen=200)   # (time, message type) of everything received
@@ -258,8 +259,12 @@ class Session:
         return path, None if path else "aucun chemin"
 
     # ---- actions (one at a time, in a worker thread; progress goes to the journal) ----
+    def trace(self, kind, name, body):
+        if self._trace is not None: self._trace.append((round(time.time(), 3), kind, name, body.hex()))
+
     def _send(self, name, body=b""):
         if self.conn is None: raise RuntimeError("non connecté")
+        self.trace("C", name, body)
         self.conn.send(request(name, body))
 
     def _walk(self, path):
@@ -383,9 +388,25 @@ class Session:
         if not self._mapchanged.wait(8): raise RuntimeError("le serveur n'a pas lancé le combat (pas de jow)")
         time.sleep(2.5)   # the real client waits for the fight map before placement
         t_fight = time.time()
+        self._trace = []   # record every message of this fight for a post-mortem (dofus_net/fights/*.jsonl)
         try: self.fight.play()
         finally:
+            self._dump_trace(mons)
             threading.Timer(6.0, lambda: questbook.record_fight(self.map_id, mons, self._completed_since(t_fight))).start()
+
+    def _dump_trace(self, monsters):
+        tr, self._trace = self._trace, None
+        if not tr: return
+        try:
+            d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fights"); os.makedirs(d, exist_ok=True)
+            names = "-".join((gamedata.quest_data("monsters", m) or str(m)).replace(" ", "_") for m in monsters)[:60]
+            path = os.path.join(d, time.strftime("%Y%m%d-%H%M%S") + f"_{names}.jsonl")
+            head = {"map": self.map_id, "monsters": monsters, "my_cell": self.my_cell, "stats": self.stats, "spells": self.spell_ids}
+            with open(path, "w", encoding="utf8") as f:
+                f.write(json.dumps(head) + "\n")
+                for e in tr: f.write(json.dumps(e) + "\n")
+            self.log("info", f"Combat enregistré : {os.path.basename(path)}")
+        except Exception as e: self.log("warn", f"enregistrement du combat impossible : {e}")
 
     def attack(self, actor):
         return self.start_action(f"Attaquer le groupe {actor}", lambda: self._do_attack(actor))
@@ -475,7 +496,7 @@ class Session:
                     state["dirty"], state["last_flush"] = False, time.time()
 
             def on_message(t, body):
-                self.recent.append((time.time(), t, body))
+                self.recent.append((time.time(), t, body)); self.trace("S", t, body)
                 if t not in KEEP: return
                 self._on_map_message(t, body)
                 if t in (login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP) or t in QUEST_MSGS or t in FIGHT_MSGS: return
