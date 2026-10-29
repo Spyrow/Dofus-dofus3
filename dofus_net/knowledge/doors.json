@@ -1,0 +1,64 @@
+{
+ "241445377": [
+  {
+   "skill": 29374,
+   "element": 541737,
+   "cell": null,
+   "to": 154010883,
+   "stand": 461
+  }
+ ],
+ "191106048": [
+  {
+   "skill": 9903,
+   "element": 515837,
+   "cell": null,
+   "to": 192416776,
+   "stand": 382
+  }
+ ],
+ "192416776": [
+  {
+   "skill": 9962,
+   "element": 515866,
+   "cell": null,
+   "to": 153880835,
+   "stand": 468
+  }
+ ],
+ "153878788": [
+  {
+   "skill": 11071,
+   "element": 489330,
+   "cell": null,
+   "to": 153356294,
+   "stand": 343
+  }
+ ],
+ "153356294": [
+  {
+   "skill": 1920,
+   "element": 489565,
+   "cell": null,
+   "to": 153356292,
+   "stand": 229
+  },
+  {
+   "kind": "step",
+   "element": null,
+   "skill": null,
+   "cell": 452,
+   "to": 153878788,
+   "stand": null
+  }
+ ],
+ "153356292": [
+  {
+   "skill": 1919,
+   "element": 489349,
+   "cell": null,
+   "to": 153356294,
+   "stand": 387
+  }
+ ]
+}

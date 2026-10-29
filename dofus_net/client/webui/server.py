@@ -10,7 +10,7 @@ import argparse, json, os, re, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-import accounts, gamesession
+import accounts, gamesession, questbook
 from pkce_login import login
 
 DEMO = {"id": "demo", "label": "Démo (données fictives)", "added": None, "refreshed": None, "snapshot": None, "demo": True}
@@ -99,6 +99,8 @@ class H(BaseHTTPRequestHandler):
             else: self._json(data)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/quests", p):
             self._json(gamesession.session(m[1]).questview())
+        elif p == "/api/questbook":
+            self._json(questbook.summary())
         elif m := re.fullmatch(r"/api/accounts/(\w+)/recent", p):   # diagnostics: the last messages received from the game server
             self._json([{"t": ts, "type": t, "size": len(b), "hex": b.hex()[:80]} for ts, t, b in list(gamesession.session(m[1]).recent)[-80:]])
         elif m := re.fullmatch(r"/api/accounts/(\w+)/mapview", p):

@@ -7,7 +7,7 @@ It also stops when a fight starts, when the character disconnects, after MAX_ATT
 
 Travel uses %APPDATA%/dofus_net/mapgraph.json (tools/index_maps.py): {map id: [top, bottom, left, right] neighbour ids}."""
 import collections, json, os, re, threading, time
-import gamedata, gamedoors, gamequests, store
+import gamedata, gamedoors, gamequests, questbook, store
 
 GRAPH_PATH = os.path.join(os.path.dirname(store.PATH), "mapgraph.json")
 SIDES = ("top", "bottom", "left", "right")
@@ -251,8 +251,11 @@ class Autopilot:
             if not d or not self._alive(): return
             replies = d.get("replies") or []
             if not replies: time.sleep(1.5); return
-            r = pick_reply(replies)
-            self.say("info", f"réponse : « {r['text']} »")
+            d = self.s._dlg or {}
+            r = questbook.suggest_reply(d.get("npc"), d.get("map"), d.get("path", []), replies, self.s._active_objectives(), REFUSE)
+            src = "livre de quêtes" if r else "heuristique"
+            r = r or pick_reply(replies)
+            self.say("info", f"réponse ({src}) : « {r['text']} »")
             try: self._act(f"Répondre ({r['id']})", lambda: self.s._do_reply(r["id"]))
             except RuntimeError as e: self.say("warn", f"réponse impossible : {e}"); return
             time.sleep(0.4)

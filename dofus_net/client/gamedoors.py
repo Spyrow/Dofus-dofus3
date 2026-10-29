@@ -5,11 +5,14 @@ session: tools/learn_doors.py, or one made through the UI). Stored in %APPDATA%/
 {from map id: [{"skill": itz.1, "element": itz.3, "cell": element cell or null, "to": map id reached}]}.
 The element list of a map comes from the jnj message (field 7: {4: element model id, 5: {1: skill, 3: type}, 6: element id}); using one is
 `itz {1: skill, 3: element}` -> jow."""
-import json, os, threading
-import store
+import json, os, shutil, threading
+import knowledge, store
 from wire import parse
 
-PATH = os.path.join(os.path.dirname(store.PATH), "doors.json")
+PATH = knowledge.path("doors.json")   # shared by every character (versioned with the repo)
+_OLD = os.path.join(os.path.dirname(store.PATH), "doors.json")   # earlier location (%APPDATA%): copied once
+if not os.path.exists(PATH) and os.path.exists(_OLD):
+    os.makedirs(knowledge.DIR, exist_ok=True); shutil.copyfile(_OLD, PATH)
 _lock = threading.Lock()
 
 

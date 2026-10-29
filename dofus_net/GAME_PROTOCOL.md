@@ -72,5 +72,10 @@ Le panneau de succès fait `mdm{onglet}` -> `mdo` (liste de succès) : ce ne son
 - Fin : `jwp` / `jwh` (résultats) puis la carte d'exploration est renvoyée (`jow`). La mort d'un ennemi n'a pas de message identifié.
 - Attention : couper la connexion en plein combat laisse le personnage retenu côté serveur : la reconnexion reste muette quelques minutes.
 
+## Connaissances partagées (`dofus_net/knowledge/`, versionné, sans données personnelles)
+- `questbook.json` (`client/questbook.py`) : quêtes vues (étapes, objectifs), objectifs résolus (dialogue ou combat) et chaque issue de dialogue
+  (chemin de réponses, objectifs validés dans les 6 s, impasses). L'autopilote suit un chemin qui a déjà validé un objectif actif, sinon évite les impasses connues.
+- `doors.json` (`client/gamedoors.py`) : éléments interactifs et cases-déclencheurs appris. Alimentés en direct par les sessions et par `tools/learn_quests.py` / `tools/learn_doors.py` sur des captures.
+
 ## Données statiques (`tools/export_gamedata.py`)
 Bundles Unity `Dofus_Data/StreamingAssets/Content/Data/*.asset.bundle` + textes `Content/I18n/<lang>.bin` (index u32 id/offset, chaînes varint+UTF-8).

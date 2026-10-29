@@ -1,0 +1,258 @@
+{
+ "dialogs": {
+  "2880@153356294": [
+   {
+    "active": [
+     9764,
+     9765,
+     9814,
+     9863,
+     9864,
+     9866,
+     13849
+    ],
+    "completed": [
+     9765
+    ],
+    "count": 1,
+    "path": [
+     25048,
+     25047,
+     25045
+    ]
+   },
+   {
+    "active": [
+     9764,
+     9765,
+     9814,
+     9828,
+     9863,
+     9864,
+     9866,
+     13849
+    ],
+    "completed": [
+     9765
+    ],
+    "count": 1,
+    "path": [
+     25044,
+     25043,
+     25038
+    ]
+   },
+   {
+    "active": [
+     9831
+    ],
+    "completed": [
+     9831
+    ],
+    "count": 1,
+    "path": [
+     25054,
+     25053,
+     25052,
+     25050,
+     25049
+    ]
+   }
+  ],
+  "2894@153356292": [
+   {
+    "active": [
+     9764,
+     9814,
+     9828,
+     9863,
+     9864,
+     9866,
+     13849
+    ],
+    "completed": [
+     9828
+    ],
+    "count": 1,
+    "path": [
+     25091,
+     25089,
+     25088
+    ]
+   },
+   {
+    "active": [
+     9764,
+     9814,
+     9830,
+     9863,
+     9864,
+     9866,
+     13849
+    ],
+    "completed": [
+     9830
+    ],
+    "count": 1,
+    "path": [
+     25095,
+     25094
+    ]
+   }
+  ],
+  "7102@241445377": [
+   {
+    "active": [],
+    "completed": [],
+    "count": 1,
+    "path": [
+     83190
+    ]
+   }
+  ]
+ },
+ "quests": {
+  "1632": {
+   "name": "Le village dans les nuages",
+   "seen": 19,
+   "steps": {
+    "2252": {
+     "name": "Le village dans les nuages",
+     "objectives": {
+      "9762": "Aller voir Ternette Nhin",
+      "9763": "Aller voir Berb Nhin",
+      "9764": "Aller voir Grobid",
+      "9765": "Aller voir Capitaine des Kerubims",
+      "9766": "Aller voir Hollie Brok"
+     }
+    }
+   }
+  },
+  "1639": {
+   "name": "Transport peu commun",
+   "seen": 18,
+   "steps": {
+    "2259": {
+     "name": "Transport peu commun",
+     "objectives": {
+      "9814": "Aller voir Xélora Fistol",
+      "9815": "Examiner le zaap des pâturages"
+     }
+    }
+   }
+  },
+  "1642": {
+   "name": "Mise à l'épreuve",
+   "seen": 13,
+   "steps": {
+    "2262": {
+     "name": "Mise à l'épreuve",
+     "objectives": {
+      "9828": "Aller voir Caporale Mynerve",
+      "9829": "Vaincre x1 Caporale Mynerve en un seul combat",
+      "9830": "Aller voir Caporale Mynerve",
+      "9831": "Retourner voir Capitaine des Kerubims"
+     }
+    }
+   }
+  },
+  "1643": {
+   "name": "Champs de bataille",
+   "seen": 5,
+   "steps": {
+    "2263": {
+     "name": "Champs de bataille",
+     "objectives": {
+      "9832": "Vaincre x1 Tofu Chimérique en un seul combat",
+      "9833": "Vaincre x1 Pissenlit Miroitant en un seul combat",
+      "9834": "Vaincre x1 Rose Vaporeuse en un seul combat",
+      "9835": "Vaincre x1 Tournesol Nébuleux en un seul combat"
+     }
+    }
+   }
+  },
+  "1649": {
+   "name": "Produits naturels",
+   "seen": 18,
+   "steps": {
+    "2269": {
+     "name": "Produits naturels",
+     "objectives": {
+      "9863": "Fabriquer 1 Pain d'Incarnam et fermer l'interface",
+      "9864": "Fabriquer 1 Goujon en Tranche et fermer l'interface",
+      "9866": "Fabriquer 1 Potion de Mini Soin et fermer l'interface"
+     }
+    }
+   }
+  },
+  "1958": {
+   "name": "Les principes d'Archie m'aident",
+   "seen": 18,
+   "steps": {
+    "2628": {
+     "name": "Les principes d'Archie m'aident",
+     "objectives": {
+      "13849": "Entrer dans la Tour du Conseil d'Astrub",
+      "14257": "Aller voir Envoyée des Douze"
+     }
+    }
+   }
+  }
+ },
+ "solved": {
+  "9765": {
+   "count": 2,
+   "kind": "dialog",
+   "last": 1793304162,
+   "map": 153356294,
+   "npc": 2880,
+   "path": [
+    25044,
+    25043,
+    25038
+   ],
+   "qid": 1632
+  },
+  "9828": {
+   "count": 1,
+   "kind": "dialog",
+   "last": 1793304162,
+   "map": 153356292,
+   "npc": 2894,
+   "path": [
+    25091,
+    25089,
+    25088
+   ],
+   "qid": 1642
+  },
+  "9830": {
+   "count": 1,
+   "kind": "dialog",
+   "last": 1793304162,
+   "map": 153356292,
+   "npc": 2894,
+   "path": [
+    25095,
+    25094
+   ],
+   "qid": 1642
+  },
+  "9831": {
+   "count": 1,
+   "kind": "dialog",
+   "last": 1793304176,
+   "map": 153356294,
+   "npc": 2880,
+   "path": [
+    25054,
+    25053,
+    25052,
+    25050,
+    25049
+   ],
+   "qid": 1642
+  }
+ },
+ "version": 1
+}

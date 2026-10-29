@@ -8,7 +8,7 @@ closed (a second session on the same account kicks the first, in both directions
 Chat: the chat messages are NOT decoded yet (none in the captures so far): `Session.chat` stays empty until gamestate
 learns the message; see add_chat()."""
 import collections, threading, time
-import accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, autopilot, fightbot, login
+import accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, autopilot, fightbot, questbook, login
 from wire import parse, dec_varint, enc_varint, f_bytes, f_varint, request
 from haapi import create_game_token, GAME_IDS
 
@@ -37,6 +37,7 @@ class Session:
         self.groups = {}; self.stats = {}; self.spell_ids = []; self.fight = fightbot.Fight(self)   # monster groups {actor: [monster ids]}
         self.elements = {}   # interactive elements of the current map (from jnj)
         self.in_fight = False; self.auto = autopilot.Autopilot(self)
+        self._dlg = None; self._done = collections.deque(maxlen=60)   # dialog being recorded; (time, quest, objective) accomplished lately
         self.npcs = {}; self.quests = {}; self.dialog = None   # actor id -> template id; quest id -> (step, objectives); open dialog
         self._dialog_event = threading.Event(); self.recent = collections.deque(maxlen=200)   # (time, message type) of everything received
         self._act = threading.Lock(); self.busy = None; self._moved = threading.Event(); self._mapchanged = threading.Event()
@@ -92,11 +93,13 @@ class Session:
             self.in_fight = False; self.log("event", "Combat terminé")
         elif t == login.ICA:
             with self._lock: self.quests = {q: (st, objs) for q, st, objs in gamequests.active_quests(body)}
+            for q, (st, objs) in list(self.quests.items()): self._book_quest(q, st, objs)
             self.log("event", f"Quêtes en cours : {len(self.quests)}")
         elif t == login.ICJ:
             q = gamequests.quest_state(body)
             if q:
                 with self._lock: self.quests[q[0]] = (q[1], q[2])
+                self._book_quest(q[0], q[1], q[2])
                 name = (gamedata.quest_data("quests", q[0]) or {}).get("name") or q[0]
                 self.log("event", f"Quête « {name} » mise à jour : " + " ; ".join(f"{gamequests.objective_text(o)}{'' if a else ' ✓'}" for o, a in q[2].items()))
         elif t == login.ICB:
@@ -107,11 +110,14 @@ class Session:
             except RuntimeError: pass
         elif t == login.IBG:
             oid, qid = _vi(body, 1), _vi(body, 2)
+            self._done.append((time.time(), qid, oid))
             with self._lock:
                 if qid in self.quests and oid in self.quests[qid][1]: self.quests[qid][1][oid] = False   # done (the next icj confirms)
             self.log("event", f"Objectif accompli : {gamequests.objective_text(oid)}")
         elif t == login.ILX:
-            with self._lock: self.dialog = {"actor": _vi(body, 5), "text": None, "replies": []}
+            actor = _vi(body, 5)
+            with self._lock: self.dialog = {"actor": actor, "text": None, "replies": []}
+            self._dlg = {"npc": self.npcs.get(actor), "map": self.map_id, "path": [], "t": time.time(), "active": self._active_objectives()}
         elif t == login.ILF:
             msg, replies = gamequests.dialog_step(body)
             text = gamedata.quest_data("messages", msg) or f"(message {msg})"
@@ -122,6 +128,8 @@ class Session:
             self._dialog_event.set()
         elif t == login.KIS:
             with self._lock: self.dialog = None
+            d, self._dlg = self._dlg, None
+            if d: threading.Timer(6.0, self._dlg_done, (d,)).start()   # the server confirms an objective shortly after the dialog ends
             self.log("event", "Dialogue terminé"); self._dialog_event.set()
         elif t == login.JNZ:      # {1: packed path (cells), 4: actor id}
             e = dict(parse(body)); path = []; raw = e.get(1)
@@ -149,6 +157,22 @@ class Session:
             elif aid < 0 and not self.in_fight:
                 mons = fightbot.monster_group(entry)
                 if mons: self.groups[aid] = mons
+
+    def _active_objectives(self):
+        with self._lock: return [o for _q, (_st, objs) in self.quests.items() for o, active in objs.items() if active]
+
+    def _book_quest(self, qid, step, objs):
+        try:
+            q = gamedata.quest_data("quests", qid) or {}; st = gamedata.quest_data("steps", step) or {}
+            questbook.observe(qid, step, list(objs), q.get("name"), st.get("name"), {o: gamequests.objective_text(o) for o in objs})
+        except Exception: pass   # the book is a convenience: never break the session
+
+    def _completed_since(self, t0):
+        return [(q, o) for t, q, o in list(self._done) if t >= t0]
+
+    def _dlg_done(self, d):
+        try: questbook.record_dialog(d["npc"], d["map"], d["path"], self._completed_since(d["t"]), d["active"])
+        except Exception: pass
 
     def mapdata(self):
         return gamemaps.load(self.map_id) if self.map_id else None
@@ -313,7 +337,10 @@ class Session:
         self._send(login.HMS, f_varint(2, actor)); self.log("action", f"→ hms : attaquer le groupe {actor} ({', '.join(gamedata.quest_data('monsters', i) or str(i) for i in mons)})")
         if not self._mapchanged.wait(8): raise RuntimeError("le serveur n'a pas lancé le combat (pas de jow)")
         time.sleep(2.5)   # the real client waits for the fight map before placement
-        self.fight.play()
+        t_fight = time.time()
+        try: self.fight.play()
+        finally:
+            threading.Timer(6.0, lambda: questbook.record_fight(self.map_id, mons, self._completed_since(t_fight))).start()
 
     def attack(self, actor):
         return self.start_action(f"Attaquer le groupe {actor}", lambda: self._do_attack(actor))
@@ -355,6 +382,7 @@ class Session:
         if not self.dialog or rid not in [r["id"] for r in self.dialog.get("replies", [])]: raise RuntimeError("réponse indisponible")
         self._dialog_event.clear()
         self._send(login.IKY, f_varint(1, rid)); self.log("action", f"→ iky : réponse {rid}")
+        if self._dlg is not None: self._dlg["path"].append(rid)
         if not self._dialog_event.wait(5): raise RuntimeError("pas de suite de dialogue")
 
     def talk(self, actor):

@@ -167,9 +167,12 @@ class Fight:
                     steps.append(c)
                     if dist(c, tcell) <= rng: break
                 if not steps: return
-                walk = [me] + steps; s._moved.clear()
-                s._send(login.JOK, f_bytes(1, b"".join(enc_varint(k) for k in gamemaps.movement_keys(walk))) + f_varint(2, s.map_id))
-                say(f"déplacement de {len(steps)} case(s) vers {tid}")
-                if not s._moved.wait(3): raise RuntimeError("déplacement refusé")
+                walk = [me] + steps; s._moved.clear(); t0 = time.time()
+                keys = gamemaps.movement_keys(walk)
+                s._send(login.JOK, f_bytes(1, b"".join(enc_varint(k) for k in keys)) + f_varint(2, s.map_id))
+                say(f"déplacement de {len(steps)} case(s) vers {tid} : de {me} à {steps[-1]} (clés {[(k >> 12, k & 0xFFF) for k in keys]}, carte {s.map_id})")
+                if not s._moved.wait(3):
+                    got = sorted({str(t) for ts, t, _b in s.recent if ts >= t0 and t not in ("knb", None)})
+                    raise RuntimeError(f"déplacement refusé (le serveur a répondu : {', '.join(got) or 'rien'}; ma case selon le serveur ?)")
                 mp -= len(steps); time.sleep(gamemaps.STEP_SECONDS * len(steps) + 0.6); continue
             return

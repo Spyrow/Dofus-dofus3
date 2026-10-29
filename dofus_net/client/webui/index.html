@@ -284,6 +284,7 @@ async function refreshQuests(a){
   let v;try{v=await api(`/api/accounts/${a.id}/quests`)}catch(e){box.innerHTML=`<p class="err">${esc(e.message)}</p>`;return}
   const sig=JSON.stringify(v);if(sig===qSig&&box.firstChild)return;qSig=sig;
   const d=v.dialog,off=!v.live;
+  let qb=null;try{qb=await api("/api/questbook")}catch{}
   box.innerHTML=
    `<div class="card"><h2>Autopilote de quêtes <span class="badge ${v.auto.on?"connected":""}">${v.auto.on?"actif":"arrêté"}</span></h2>
      <p class="msg">${v.auto.on?esc(v.auto.goal||"…"):"Voyage jusqu'au PNJ de l'objectif, lui parle et répond au dialogue. S'arrête sur un combat, un objectif non géré ou un échec (voir la Console)."}</p>
@@ -294,6 +295,7 @@ async function refreshQuests(a){
    `<div class="card"><h2>Groupes de monstres <span class="msg">· ${(v.groups||[]).length}</span></h2>${(v.groups||[]).length?`<table>${v.groups.map(g=>`<tr><td>${g.monsters.map(m=>esc(m.name)).join(", ")}</td><td class="msg">case ${esc(g.cell)}</td><td class="n"><button data-atk="${g.actor}" ${off||v.in_fight?"disabled":""}>Attaquer</button></td></tr>`).join("")}</table>`:'<p class="msg">Aucun groupe sur cette carte.</p>'}
      <p class="hint">Combat automatique simple (sorts à portée, déplacement vers l'ennemi, fin de tour) : à utiliser sur des groupes faciles. ${v.in_fight?"<b>Combat en cours.</b>":""}</p></div>
     <div class="card"><h2>PNJ sur la carte</h2>${v.npcs.length?`<table>${v.npcs.map(n=>`<tr><td>${esc(n.name)}</td><td class="msg">case ${esc(n.cell)}</td><td class="n"><button data-talk="${n.actor}" ${off||d?"disabled":""}>Parler</button></td></tr>`).join("")}</table>`:'<p class="msg">Aucun PNJ (connecte le personnage).</p>'}</div>
+    ${qb?`<div class="card"><h2>Livre de quêtes <span class="msg">· partagé entre tes personnages</span></h2><p class="msg">${qb.quests} quêtes vues · ${qb.solved} objectifs résolus mémorisés · ${qb.dialogs} dialogues enregistrés. L'autopilote réutilise les réponses qui ont déjà fonctionné.</p></div>`:""}
     <div class="card"><h2>Quêtes en cours <span class="msg">· ${v.quests.length}</span></h2>${v.quests.map(q=>`<div style="margin:12px 0"><b>${esc(q.name)}</b>
       ${q.desc?`<div class="stats">${esc(q.desc)}</div>`:""}
       ${q.objectives.map(o=>`<div class="row"><span>${o.active?"○":"✓"} ${esc(o.text)}</span><span class="msg">${esc(o.where||"")}</span></div>`).join("")}</div>`).join("")||'<p class="msg">Aucune quête (connecte le personnage).</p>'}</div>`;
