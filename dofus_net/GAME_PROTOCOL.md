@@ -27,7 +27,7 @@ Le panneau de succès fait `mdm{onglet}` -> `mdo` (liste de succès) : ce ne son
 ## Déplacement : cases, chemin, changement de carte (implémenté dans `client/gamemaps.py` + `gamesession.py`, vérifié en jeu)
 - Cartes : `Content/Map/Data/mapdata_assets_world_*.bundle`, un MonoBehaviour `map_<id>` : 560 cases (14 x 20, lignes entrelacées),
   `cellsData[i].mov` = franchissable, `.mapChangeData` = masque des sorties (1 E, 2 SE, 4 S, 8 SO, 16 O, 32 NO, 64 N, 128 NE ; droite/bas/gauche/haut = 1/4/16/64),
-  `right/bottom/left/topNeighbourId`. Index id -> bundle : `tools/index_maps.py`.
+  `right/bottom/left/topNeighbourId`. Une bordure est marquée soit par son bit central seul, soit (cartes en coin) par les deux bits diagonaux qui l'encadrent : bas = 2+8 (flag 10), droite = 2+128 (flag 130), gauche = 8+32, haut = 32+128 ; un bit diagonal isolé = case de coin, ambiguë, ignorée. Index id -> bundle : `tools/index_maps.py`.
 - Géométrie : case i -> p = i // 28, r = i % 28, c = r % 14 ; x = p + c + (r >= 14), y = c - p. Directions 0..7 = pas (+1,+1) (+1,0) (+1,-1) (0,-1) (-1,-1) (-1,0) (-1,+1) (0,+1).
   Clé de chemin = `(direction << 12) | case`, une clé au départ, à chaque changement de direction, et à l'arrivée (direction du dernier segment).
 - Marche : `jok {1: clés packées, 2: id carte}` -> `jnz` (chemin complet) -> attendre ~0,14 s/case -> `jny`.

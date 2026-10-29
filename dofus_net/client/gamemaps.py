@@ -2,7 +2,7 @@
 
 Map data: Content/Map/Data/mapdata_assets_world_*.bundle, one MonoBehaviour `map_<id>` with 560 cells (14 wide x 20 tall, rows
 interleaved) and the neighbour map ids. `mov` = walkable; `mapChangeData` = bit mask of the map exits a cell leads to
-(1 E, 2 SE, 4 S, 8 SW, 16 W, 32 NW, 64 N, 128 NE; screen right/bottom/left/top = E/S/W/N). tools/index_maps.py builds
+(1 E, 2 SE, 4 S, 8 SW, 16 W, 32 NW, 64 N, 128 NE; screen right/bottom/left/top = E/S/W/N, or on some maps the two diagonal bits framing the side). tools/index_maps.py builds
 %APPDATA%/dofus_net/mapindex.json (map id -> bundle). Parsed maps are cached in %APPDATA%/dofus_net/mapcells/<id>.json.
 
 Cell geometry (Dofus 2 MapPoint, checked against the movement paths of a capture): in "grid" coordinates cell i has
@@ -94,10 +94,15 @@ def walkable(m, cell):
     return 0 <= cell < CELLS and bool(m["cells"][cell][0])
 
 
+# A border can be marked by its middle bit alone (1 right, 4 bottom, 16 left, 64 top) or, on some maps, by the two diagonal bits that frame it
+# (right 2+128, bottom 2+8, left 8+32, top 32+128; e.g. flag 10 = SE+SW along a bottom edge, 130 = SE+NE along a right edge).
+DIAG_BITS = {"right": (2, 128), "bottom": (2, 8), "left": (8, 32), "top": (32, 128)}
+
+
 def exit_cells(m, side):
-    """Walkable cells whose mapChangeData leads to `side` (right/bottom/left/top)."""
-    bit = EXIT_BIT[side]
-    return [i for i, c in enumerate(m["cells"]) if c[0] and c[2] & bit]
+    """Walkable cells whose mapChangeData leads to `side` (right/bottom/left/top). A lone diagonal bit (a corner cell) is ambiguous: ignored."""
+    mid, (d1, d2) = EXIT_BIT[side], DIAG_BITS[side]
+    return [i for i, c in enumerate(m["cells"]) if c[0] and (c[2] & mid or (c[2] & d1 and c[2] & d2))]
 
 
 def find_path(m, start, goal, blocked=(), diagonals_only=False):
