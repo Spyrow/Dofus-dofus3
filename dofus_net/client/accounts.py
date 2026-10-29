@@ -1,6 +1,6 @@
 """Multi-account store for the web UI: %APPDATA%/dofus_net/accounts.json (same folder as store.py, OUTSIDE the repo).
 
-Character snapshots (keys: character, characteristics, equipment, inventory, jobs, spells) live in %APPDATA%/dofus_net/characters/<account id>.json. Nothing in this repo fills them yet
+Character snapshots (keys: character, characteristics, equipment, inventory, jobs, spells, position, maps, trail) live in %APPDATA%/dofus_net/characters/<account id>.json. Nothing in this repo fills them yet
 (the game protocol is only decoded up to the handshake, see login.py): whatever later decodes the game stream should
 write that file, schema in sample_character() below.
 """
@@ -159,6 +159,12 @@ def sample_character():
             {"name": "Peau de Bouftou", "type": "Ressource", "level": 10, "qty": 58},
             {"name": "Potion de rappel", "type": "Consommable", "level": 1, "qty": 12},
             {"name": "Épée d'exemple", "type": "Arme", "level": 120, "qty": 1}]},
+        "position": {"x": 4, "y": -2, "map_id": 88082704, "world": "Monde des Douze", "area": "Zone d'exemple", "subarea": "Sous-zone d'exemple"},
+        "maps": [{"x": 4, "y": -2, "name": "Plaine d'exemple", "area": "Zone d'exemple"},
+                 {"x": 3, "y": -2, "name": "Route d'exemple", "area": "Zone d'exemple"},
+                 {"x": 5, "y": -2, "name": "Carrefour d'exemple", "area": "Zone d'exemple"},
+                 {"x": 4, "y": -1, "name": "Pont d'exemple", "area": "Zone d'exemple"}],
+        "trail": [{"x": 2, "y": -2}, {"x": 3, "y": -2}, {"x": 4, "y": -2}],
         "jobs": [{"name": "Paysan", "level": 100, "xp_pct": 35}, {"name": "Boulanger", "level": 87, "xp_pct": 60},
                  {"name": "Bûcheron", "level": 12, "xp_pct": 5}],
         "spells": [

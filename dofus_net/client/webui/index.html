@@ -26,6 +26,10 @@ table{width:100%;border-collapse:collapse;margin-top:8px}th,td{text-align:left;p
 input{font:inherit;width:100%;max-width:320px;padding:6px 10px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
 td input,td select{max-width:none;width:100%;min-width:56px}td input[type=number]{width:70px}select{font:inherit;padding:5px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
 .log li{margin:2px 0}.log .mv{color:var(--mut)}.hint{font-size:13px;color:var(--mut)}
+.mapwrap{overflow-x:auto;outline:none}.mapg{display:grid;gap:1px;background:var(--line);border:1px solid var(--line);width:max-content}
+.mc{width:38px;height:30px;background:var(--card);font-size:10px;color:var(--mut);display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none}
+.mc.k{background:color-mix(in srgb,var(--acc) 18%,var(--card))}.mc.t{background:color-mix(in srgb,var(--acc) 38%,var(--card))}.mc.o{cursor:default}
+.mc.me{background:var(--acc);color:#fff;font-weight:700}.mc.sel{outline:2px solid var(--fg);outline-offset:-2px}.mc.ax{background:var(--bg);cursor:default;font-size:11px}
 @media(max-width:700px){.app{grid-template-columns:1fr}aside{border:0;border-bottom:1px solid var(--line)}}
 </style></head><body>
 <div class="app">
@@ -96,10 +100,12 @@ async function render(){
    jobs:()=>`<div class="card"><h2>Métiers</h2>${(d.jobs||[]).map(j=>`<div style="margin:10px 0"><div class="row"><span><b style="color:var(--fg)">${esc(j.name)}</b></span><span>niveau ${esc(j.level)}</span></div>${bar(j.xp_pct)}</div>`).join("")||none}</div>`,
    spells:()=>`<div class="card"><h2>Sorts</h2>${(d.spells||[]).length?`<table><tr><th>Sort</th><th>Élément</th><th class="n">Niv.</th><th class="n">PA</th><th>Portée</th><th class="n">Relance</th></tr>${d.spells.map(x=>`<tr><td><b>${esc(x.name)}</b>${x.desc?`<div class="stats">${esc(x.desc)}</div>`:""}</td><td class="msg">${esc(x.element)}</td><td class="n">${esc(x.level)}</td><td class="n">${esc(x.ap)}</td><td>${esc(x.range)}</td><td class="n">${x.cooldown?esc(x.cooldown)+" t.":"—"}</td></tr>`).join("")}</table>`:none}</div>`};
   tabs.combat=()=>'<div id="combat"><p class="msg">Chargement…</p></div>';
+  tabs.map=()=>'<div id="map"></div>';
   if(!tabs[tab])tab="fiche";
-  $("#char").innerHTML=`<div class="tabs">${[["fiche","Fiche"],["inv","Inventaire"],["jobs","Métiers"],["spells","Sorts"],["combat","Combat"]].map(t=>`<button class="${t[0]===tab?"on":""}" data-t="${t[0]}">${t[1]}</button>`).join("")}</div>`+tabs[tab]();
+  $("#char").innerHTML=`<div class="tabs">${[["fiche","Fiche"],["inv","Inventaire"],["jobs","Métiers"],["spells","Sorts"],["combat","Combat"],["map","Map"]].map(t=>`<button class="${t[0]===tab?"on":""}" data-t="${t[0]}">${t[1]}</button>`).join("")}</div>`+tabs[tab]();
   document.querySelectorAll(".tabs button").forEach(e=>e.onclick=()=>{tab=e.dataset.t;try{localStorage.setItem("tab",tab)}catch{};render()});
   if(tab==="combat")initCombat(a,d);
+  if(tab==="map")initMap(a,d);
   const q=$("#invq");if(q){q.oninput=()=>{invQ=q.value;const pos=q.selectionStart;render().then(()=>{const n=$("#invq");n&&(n.focus(),n.setSelectionRange(pos,pos))})};}
 }
 async function act(fn){
@@ -196,6 +202,43 @@ async function initCombat(a,d){
     }
     draw();
   };
+  draw();
+}
+
+// ---- Map: world-grid viewer around the character (view only: the character is never moved) ----
+let mapView=null;   // {id,cx,cy,sel,follow}
+function initMap(a,d){
+  const box=$("#map"),pos=d.position,W=17,H=11,maps=d.maps||[];
+  const key=(x,y)=>x+","+y,known=new Map(maps.map(m=>[key(m.x,m.y),m])),trail=new Set((d.trail||[]).map(t=>key(t.x,t.y)));
+  if(!mapView||mapView.id!==a.id)mapView={id:a.id,cx:pos?pos.x:0,cy:pos?pos.y:0,sel:pos?{x:pos.x,y:pos.y}:null,follow:true};
+  else if(mapView.follow&&pos){mapView.cx=pos.x;mapView.cy=pos.y}   // live: keep following the character
+  const draw=()=>{
+    const v=mapView,x0=v.cx-(W>>1),y0=v.cy-(H>>1);let cells="";
+    cells+='<div class="mc ax"></div>'+Array.from({length:W},(_,i)=>`<div class="mc ax">${x0+i}</div>`).join("");
+    for(let j=0;j<H;j++){const y=y0+j;cells+=`<div class="mc ax">${y}</div>`;
+      for(let i=0;i<W;i++){const x=x0+i,k=key(x,y),m=known.get(k),me=pos&&pos.x===x&&pos.y===y;
+        cells+=`<div class="mc ${me?"me":trail.has(k)?"t":m?"k":""} ${v.sel&&v.sel.x===x&&v.sel.y===y?"sel":""}" data-x="${x}" data-y="${y}" title="${esc(m?m.name:"")}">${me?"●":m?"▪":""}</div>`}}
+    const s=v.sel,m=s&&known.get(key(s.x,s.y)),here=s&&pos&&pos.x===s.x&&pos.y===s.y;
+    box.innerHTML=`<div class="card"><h2>Carte du monde ${pos?`<span class="msg">· ${esc(pos.world||"")}</span>`:""}</h2>
+     ${pos?"":'<p class="msg">Position inconnue : aucun instantané de position pour ce personnage. Tu peux quand même parcourir la grille.</p>'}
+     <p><button data-n="-1,0">←</button> <button data-n="1,0">→</button> <button data-n="0,-1">↑</button> <button data-n="0,1">↓</button>
+        <button data-n="home" ${pos?"":"disabled"}>Recentrer sur le personnage</button>
+        <span class="msg">Vue centrée sur [${v.cx}, ${v.cy}]${v.follow&&pos?" · suit le personnage":""}</span></p>
+     <div class="mapwrap" tabindex="0"><div class="mapg" style="grid-template-columns:repeat(${W+1},auto)">${cells}</div></div>
+     <p class="hint">● personnage · ▪ map connue · teinte foncée : trajet récent. Clique une case pour la sélectionner ; les flèches du clavier déplacent la vue.
+     Visualisation uniquement : le personnage n'est pas déplacé en jeu.</p></div>
+     <div class="card"><h2>Map sélectionnée</h2>${s?`<div class="row"><span>Coordonnées</span><span>[${s.x}, ${s.y}]</span></div>
+       ${m?`<div class="row"><span>Nom</span><span>${esc(m.name)}</span></div><div class="row"><span>Zone</span><span>${esc(m.area)}</span></div>`:'<p class="msg">Map non renseignée dans les données.</p>'}
+       ${here?`<div class="row"><span>Position actuelle</span><span>oui${pos.map_id?" · id "+esc(pos.map_id):""}</span></div>${pos.subarea?`<div class="row"><span>Sous-zone</span><span>${esc(pos.subarea)}</span></div>`:""}`:""}
+       ${pos&&!here?`<div class="row"><span>Distance du personnage</span><span>${Math.abs(s.x-pos.x)+Math.abs(s.y-pos.y)} maps</span></div>`:""}`:'<p class="msg">Aucune sélection.</p>'}</div>`;
+  };
+  const pan=(dx,dy)=>{mapView.cx+=dx;mapView.cy+=dy;mapView.follow=false;draw();const w=box.querySelector('.mapwrap');w&&w.focus()};
+  box.onclick=e=>{
+    const n=e.target.closest("button[data-n]");
+    if(n){if(n.dataset.n==="home"){mapView.cx=pos.x;mapView.cy=pos.y;mapView.follow=true;draw()}else{const [dx,dy]=n.dataset.n.split(",").map(Number);pan(dx,dy)}return}
+    const c=e.target.closest(".mc[data-x]");if(c){mapView.sel={x:+c.dataset.x,y:+c.dataset.y};draw()}
+  };
+  box.onkeydown=e=>{const k={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];if(k){e.preventDefault();pan(...k)}};
   draw();
 }
 let evT=null;
