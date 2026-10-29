@@ -12,7 +12,8 @@ from dh import make_kod
 import shield
 # obfuscated names, valid for the analysed build only: re-derive with tools/scan_connect.py after each update
 KNC, KOG, MEQ, KSJ, KSC, JPX, KOD, KTA = "knc", "kog", "meq", "ksj", "ksc", "jpx", "kod", "kta"
-IZN, JOW, KJT, JPE = "izn", "jow", "kjt", "jpe"   # izn = last message of the character-selection burst; jow = map to load
+IZN, JOW, KJT, JPE = "izn", "jow", "kjt", "jpe"
+JOK, JNY, JOC, JNZ, JNJ = "jok", "jny", "joc", "jnz", "jnj"   # move (path keys + map id), movement done, change map (neighbour id), actor path, map actors   # izn = last message of the character-selection burst; jow = map to load
 # requests the real client sends once the character is selected, ending with kkc (= world loaded, server then pushes the map)
 READY = [("lnt", f_varint(1, 1)), ("kne", f_varint(2, 1)), ("kkn", b""), ("kkt", b""), ("klu", b""), ("klx", b""), ("kmj", b""),
          ("jgm", f_varint(1, 3)), ("jgm", b""), ("jcy", b""), ("kkc", b"")]
@@ -39,7 +40,7 @@ def connection_step(token, device_hash, server_id=SERVER_ID):
     return ticket, host
 
 def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, enter_map=False, max_seconds=None,
-              stop=None, heartbeat=0, on_message=None, log=None):
+              stop=None, heartbeat=0, on_message=None, log=None, on_ready=None):
     """Handshake (+ character selection if enter). collect: list that receives every (type, body) the server pushes;
     on_message(type, body) is called for each one. enter_map: after the selection burst, send the client's READY requests
     so the server also pushes the current map (jow). heartbeat: send the client's keep-alive (kne) every N seconds.
@@ -50,6 +51,7 @@ def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, ent
     t0 = last_rx = last_hb = time.time()
     log("info", f"Connexion au serveur de jeu {host}:{PORT}")
     c = GameConn(host, PORT); c.s.settimeout(1.0)
+    if on_ready: on_ready(c)
     c.send(request(KNC, f_bytes(1, ticket) + f_bytes(2, "fr"))); log("action", "→ knc (ticket)")
     char_id = None; sent_kod = False
     while True:

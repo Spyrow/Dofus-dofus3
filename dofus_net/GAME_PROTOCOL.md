@@ -24,5 +24,15 @@ Le panneau de succès fait `mdm{onglet}` -> `mdo` (liste de succès) : ce ne son
 - `kne {2: 1}` toutes les ~5 s = keep-alive.
 - Voisines : table `mapscrollactions` (right/bottom/left/top) ; coordonnées/nom : `mapsinformation` ; exportées par `tools/export_gamedata.py`.
 
+## Déplacement : cases, chemin, changement de carte (implémenté dans `client/gamemaps.py` + `gamesession.py`, vérifié en jeu)
+- Cartes : `Content/Map/Data/mapdata_assets_world_*.bundle`, un MonoBehaviour `map_<id>` : 560 cases (14 x 20, lignes entrelacées),
+  `cellsData[i].mov` = franchissable, `.mapChangeData` = masque des sorties (1 E, 2 SE, 4 S, 8 SO, 16 O, 32 NO, 64 N, 128 NE ; droite/bas/gauche/haut = 1/4/16/64),
+  `right/bottom/left/topNeighbourId`. Index id -> bundle : `tools/index_maps.py`.
+- Géométrie : case i -> p = i // 28, r = i % 28, c = r % 14 ; x = p + c + (r >= 14), y = c - p. Directions 0..7 = pas (+1,+1) (+1,0) (+1,-1) (0,-1) (-1,-1) (-1,0) (-1,+1) (0,+1).
+  Clé de chemin = `(direction << 12) | case`, une clé au départ, à chaque changement de direction, et à l'arrivée (direction du dernier segment).
+- Marche : `jok {1: clés packées, 2: id carte}` -> `jnz` (chemin complet) -> attendre ~0,14 s/case -> `jny`.
+- Changement de carte par le bord : marcher jusqu'à une case dont `mapChangeData` contient le bit du côté, `jny`, puis `joc {2: id voisin du bundle}` -> `jow` (id de la nouvelle carte, format différent de celui de `joc`).
+  Arrivée sur une case de bord : `joc` peut être renvoyé sans marcher (test : aller-retour Astrub 5,-17 <-> 6,-17).
+
 ## Données statiques (`tools/export_gamedata.py`)
 Bundles Unity `Dofus_Data/StreamingAssets/Content/Data/*.asset.bundle` + textes `Content/I18n/<lang>.bin` (index u32 id/offset, chaînes varint+UTF-8).

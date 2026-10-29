@@ -97,6 +97,8 @@ class H(BaseHTTPRequestHandler):
             data = accounts.sample_character() if aid == "demo" else accounts.load_character(aid)
             if data is None: self._json({"error": "no_snapshot"}, 404)
             else: self._json(data)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/mapview", p):
+            self._json(gamesession.session(m[1]).mapview())
         elif m := re.fullmatch(r"/api/accounts/(\w+)/session", p):
             q = dict(kv.split("=", 1) for kv in self.path.partition("?")[2].split("&") if "=" in kv)
             try: since = int(q.get("since", 0))
@@ -132,6 +134,21 @@ class H(BaseHTTPRequestHandler):
                 if not sess.start(): return self._json({"error": "session déjà active"}, 409)
             else: sess.stop()
             self._json(sess.view(sess.seq), 202)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/(path|go|changemap)", p):
+            sess = gamesession.session(m[1])
+            if m[2] == "changemap":
+                side = body.get("side")
+                if side not in ("top", "bottom", "left", "right"): return self._json({"error": "bad side"}, 400)
+                err = sess.change_map(side)
+            else:
+                try: cell = int(body.get("to"))
+                except (TypeError, ValueError): return self._json({"error": "bad cell"}, 400)
+                if not 0 <= cell < 560: return self._json({"error": "bad cell"}, 400)
+                if m[2] == "path":
+                    path, err = sess.plan(cell)
+                    return self._json({"path": path} if path else {"error": err}, 200 if path else 422)
+                err = sess.go(cell)
+            self._json({"error": err} if err else {"ok": True}, 409 if err else 202)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/refresh", p):
             try: r = accounts.refresh(m[1])
             except SystemExit as e: return self._json({"error": str(e)}, 502)

@@ -1,6 +1,6 @@
 """Dofus 3 game wire format: varint length prefix + protobuf; payloads wrapped in google.protobuf.Any
 (type_url = 'type.ankama.com/<obfuscated class name>', names change every client build)."""
-import socket
+import socket, threading
 
 def enc_varint(n):
     n &= (1 << 64) - 1; out = bytearray()
@@ -42,8 +42,9 @@ def parse(b):
 
 class GameConn:
     def __init__(self, host, port=5555):
-        self.s = socket.create_connection((host, port), timeout=15); self.buf = b""
-    def send(self, payload): self.s.sendall(enc_varint(len(payload)) + payload)
+        self.s = socket.create_connection((host, port), timeout=15); self.buf = b""; self._wlock = threading.Lock()
+    def send(self, payload):
+        with self._wlock: self.s.sendall(enc_varint(len(payload)) + payload)   # callable from several threads
     def recv_frame(self):
         while True:
             if self.buf:

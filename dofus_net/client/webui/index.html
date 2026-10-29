@@ -35,6 +35,10 @@ td input,td select{max-width:none;width:100%;min-width:56px}td input[type=number
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--mut);margin-right:6px}.dot.connected{background:var(--acc)}.dot.connecting{background:#b8860b}.dot.error{background:var(--bad)}
 .cons{font:12.5px/1.5 ui-monospace,Consolas,monospace;height:340px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
 .cons div{white-space:pre-wrap;word-break:break-word}.cons .t{color:var(--mut)}.cons .warn{color:#b8860b}.cons .error{color:var(--bad)}.cons .action{color:var(--acc)}.cons .event{font-weight:600}
+.mapnav{display:grid;grid-template-columns:auto minmax(0,auto) auto;gap:8px;justify-content:center;align-items:center}
+.mapnav canvas{width:100%;max-width:640px;height:auto;display:block;cursor:pointer;background:var(--bg);border:1px solid var(--line);border-radius:8px}
+.mapnav .side{min-width:44px;padding:8px 10px;font-size:15px;line-height:1.15;text-align:center}
+.mapnav .side small{display:block;font-size:11px;color:var(--mut)}.mapnav .side:disabled small{color:inherit}
 @media(max-width:700px){.app{grid-template-columns:1fr}aside{border:0;border-bottom:1px solid var(--line)}}
 </style></head><body>
 <div class="app">
@@ -107,13 +111,13 @@ async function render(){
    jobs:()=>`<div class="card"><h2>Métiers</h2>${(d.jobs||[]).map(j=>`<div style="margin:10px 0"><div class="row"><span><b style="color:var(--fg)">${esc(j.name)}</b></span><span>niveau ${esc(j.level)}</span></div>${bar(j.xp_pct)}</div>`).join("")||none}</div>`,
    spells:()=>`<div class="card"><h2>Sorts</h2>${(d.spells||[]).length?`<table><tr><th>Sort</th><th>Élément</th><th class="n">Niv.</th><th class="n">PA</th><th>Portée</th><th class="n">Relance</th></tr>${d.spells.map(x=>`<tr><td><b>${esc(x.name)}</b>${x.desc?`<div class="stats">${esc(x.desc)}</div>`:""}</td><td class="msg">${esc(x.element)}</td><td class="n">${esc(x.level)}</td><td class="n">${esc(x.ap)}</td><td>${esc(x.range)}</td><td class="n">${x.cooldown?esc(x.cooldown)+" t.":"—"}</td></tr>`).join("")}</table>`:none}</div>`};
   tabs.combat=()=>'<div id="combat"><p class="msg">Chargement…</p></div>';
-  tabs.map=()=>'<div id="map"></div>';
+  tabs.map=()=>'<div id="curmap"></div><div id="map"></div>';
   tabs.console=()=>consoleHtml(a);
   if(!tabs[tab])tab="fiche";
   $("#char").innerHTML=`<div class="tabs">${[["fiche","Fiche"],["inv","Inventaire"],["jobs","Métiers"],["spells","Sorts"],["combat","Combat"],["map","Map"],["console","Console"]].map(t=>`<button class="${t[0]===tab?"on":""}" data-t="${t[0]}">${t[1]}</button>`).join("")}</div>`+tabs[tab]();
   document.querySelectorAll(".tabs button").forEach(e=>e.onclick=()=>{tab=e.dataset.t;try{localStorage.setItem("tab",tab)}catch{};render()});
   if(tab==="combat")initCombat(a,d);
-  if(tab==="map")initMap(a,d);
+  if(tab==="map"){initCurMap(a);initMap(a,d)}
   if(tab==="console")initConsole(a);
   const q=$("#invq");if(q){q.oninput=()=>{invQ=q.value;const pos=q.selectionStart;render().then(()=>{const n=$("#invq");n&&(n.focus(),n.setSelectionRange(pos,pos))})};}
 }
@@ -137,6 +141,7 @@ async function pollSession(){
   s.st=v;s.seq=v.seq;s.log.push(...v.log);s.chat.push(...v.chat);s.log=s.log.slice(-800);s.chat=s.chat.slice(-400);
   if(sel!==a.id)return;
   paintStatus();if(tab==="console"&&(v.log.length||v.chat.length))appendConsole(v);
+  if(tab==="map")refreshCurMap();
 }
 async function toggleSession(a){
   const v=SS[a.id]?.st?.status;
@@ -185,6 +190,81 @@ $("#add").onclick=async()=>{
     loadList();
   },1500);
 };
+
+
+// ---- Current map: cells, path preview, click to walk, side arrows to change map ----
+const CM={id:null,v:null,sel:null,path:null,hover:null,sig:""};
+const HW=22,HH=11,CW=14*2*HW+HW,CHT=40*HH+HH;
+const cellC=i=>{const r=Math.floor(i/14),c=i%14;return[(c*2+(r%2))*HW+HW,r*HH+HH]};
+const cellAt=(px,py)=>{for(let i=0;i<560;i++){const[x,y]=cellC(i);if(Math.abs(px-x)/HW+Math.abs(py-y)/HH<=1)return i}return null};
+const SIDES={top:["↑","haut"],left:["←","gauche"],right:["→","droite"],bottom:["↓","bas"]};
+function initCurMap(a){
+  const box=$("#curmap");if(!box)return;
+  if(a.demo){box.innerHTML='<div class="card"><h2>Carte actuelle</h2><p class="msg">Le compte de démonstration n\'a pas de carte en direct.</p></div>';return}
+  CM.sig="";box.innerHTML=`<div class="card"><h2 id="cmt">Carte actuelle</h2>
+   <div class="mapnav"><span></span><span id="sd-top"></span><span></span><span id="sd-left"></span><canvas id="cv" width="${CW}" height="${CHT}"></canvas><span id="sd-right"></span><span></span><span id="sd-bottom"></span><span></span></div>
+   <p class="hint" id="cmi"></p></div>`;
+  const cv=$("#cv"),pos=e=>{const r=cv.getBoundingClientRect();return cellAt((e.clientX-r.left)*CW/r.width,(e.clientY-r.top)*CHT/r.height)};
+  cv.onmousemove=e=>{const c=pos(e);if(c!==CM.hover){CM.hover=c;cv.title=c==null?"":"case "+c;drawCurMap()}};
+  cv.onmouseleave=()=>{CM.hover=null;drawCurMap()};
+  cv.onclick=async e=>{
+    const v=CM.v,c=pos(e);if(!v||c==null||!v.mov||v.mov[c]!=="1")return;
+    if(CM.sel===c&&CM.path){await moveTo(c);return}
+    CM.sel=c;CM.path=null;drawCurMap();
+    if(!v.live||v.me==null){setInfo("Connecte le personnage pour calculer un chemin.");return}
+    try{const r=await api(`/api/accounts/${sel}/path`,"POST",{to:c});CM.path=r.path}catch(err){CM.path=null;setInfo("Chemin : "+err.message,true);return}
+    drawCurMap();
+  };
+  refreshCurMap();
+}
+function setInfo(t,bad){const el=$("#cmi");if(el){el.textContent=t;el.className="hint"+(bad?" err":"")}}
+async function moveTo(c){
+  try{await api(`/api/accounts/${sel}/go`,"POST",{to:c});CM.sel=null;setInfo("Déplacement envoyé…")}catch(err){setInfo("Impossible : "+err.message,true)}
+  refreshCurMap();
+}
+async function changeMap(side){
+  try{await api(`/api/accounts/${sel}/changemap`,"POST",{side});setInfo("Changement de carte ("+SIDES[side][1]+")…")}catch(err){setInfo("Impossible : "+err.message,true)}
+  refreshCurMap();
+}
+async function refreshCurMap(){
+  const box=$("#curmap");if(!box||!$("#cv"))return;
+  let v;try{v=await api(`/api/accounts/${sel}/mapview`)}catch(e){setInfo(e.message,true);return}
+  const sig=JSON.stringify([v.map_id,v.me,v.actors,v.busy,v.live,v.sides&&Object.values(v.sides).map(s=>s.available)]);
+  if(v.map_id!==CM.id){CM.id=v.map_id;CM.sel=null;CM.path=null}
+  if(sig===CM.sig)return;CM.sig=sig;CM.v=v;
+  const i=v.info,t=$("#cmt");
+  if(t)t.innerHTML="Carte actuelle "+(i?`<span class="msg">· ${esc(i.subarea||"")}${i.name?" · "+esc(i.name):""} [${esc(i.x)}, ${esc(i.y)}]</span>`:v.map_id?`<span class="msg">· carte ${esc(v.map_id)}</span>`:"");
+  for(const[side,[ar,lbl]]of Object.entries(SIDES)){
+    const el=$("#sd-"+side);if(!el)continue;const s=v.sides&&v.sides[side];
+    const ok=s&&s.available&&v.live&&!v.busy;
+    el.innerHTML=`<button class="side" data-s="${side}" ${ok?"":"disabled"} title="${esc(s&&s.to?"Aller vers "+(s.to.subarea||"")+" ["+s.to.x+", "+s.to.y+"]":s&&s.available?"Carte voisine ("+lbl+")":"Pas de sortie ("+lbl+")")}">${ar}<small>${s&&s.to?`[${esc(s.to.x)}, ${esc(s.to.y)}]`:s&&s.available?lbl:"—"}</small></button>`;
+    el.firstChild.onclick=()=>changeMap(side);
+  }
+  setInfo(!v.mov?"Données de la carte indisponibles (lance tools/index_maps.py)."
+    :v.busy?"En cours : "+v.busy
+    :!v.live?"Personnage non connecté : dernière carte connue. Connecte-le pour te déplacer."
+    :CM.path?`Chemin de ${CM.path.length-1} cases vers la case ${CM.sel} : clique à nouveau sur la case pour y aller.`
+    :"Clique une case pour calculer le chemin, puis reclique pour y aller. Flèches : changer de carte.");
+  drawCurMap();
+}
+function drawCurMap(){
+  const cv=$("#cv"),v=CM.v;if(!cv||!v||!v.mov)return;
+  const g=cv.getContext("2d"),css=getComputedStyle(document.documentElement),col=n=>css.getPropertyValue(n).trim();
+  g.clearRect(0,0,CW,CHT);
+  const exits=new Map();for(const[side,s]of Object.entries(v.sides||{}))for(const c of s.cells)exits.set(c,side);
+  const path=new Set(CM.path||[]),dia=(i)=>{const[x,y]=cellC(i);g.beginPath();g.moveTo(x,y-HH);g.lineTo(x+HW,y);g.lineTo(x,y+HH);g.lineTo(x-HW,y);g.closePath()};
+  for(let i=0;i<560;i++){
+    const walk=v.mov[i]==="1";dia(i);
+    g.globalAlpha=1;g.fillStyle=walk?col("--card"):col("--line");if(!walk)g.globalAlpha=.45;g.fill();g.globalAlpha=1;
+    if(walk&&exits.has(i)){g.globalAlpha=.3;g.fillStyle=col("--acc");g.fill();g.globalAlpha=1}
+    if(path.has(i)){g.globalAlpha=.55;g.fillStyle=col("--acc");g.fill();g.globalAlpha=1}
+    g.strokeStyle=col("--line");g.lineWidth=1;g.stroke();
+  }
+  if(CM.path&&CM.path.length>1){g.beginPath();CM.path.forEach((c,k)=>{const[x,y]=cellC(c);k?g.lineTo(x,y):g.moveTo(x,y)});g.strokeStyle=col("--acc");g.lineWidth=2;g.stroke()}
+  for(const[id,c]of Object.entries(v.actors||{})){const[x,y]=cellC(c);g.beginPath();g.arc(x,y,4,0,7);g.fillStyle=col("--mut");g.fill()}
+  for(const c of[CM.sel,CM.hover]){if(c==null)continue;dia(c);g.strokeStyle=col("--fg");g.lineWidth=2;g.stroke()}
+  if(v.me!=null){const[x,y]=cellC(v.me);g.beginPath();g.arc(x,y,7,0,7);g.fillStyle=col("--acc");g.fill();g.strokeStyle="#fff";g.lineWidth=2;g.stroke()}
+}
 
 // ---- Combat: strategy editor + dry-run simulator (nothing here talks to the game) ----
 let aiDraft=null;   // {id,data,dirty}: survives live re-renders so unsaved edits are not lost
