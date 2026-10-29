@@ -206,7 +206,7 @@ function initCurMap(a){
   if(a.demo){box.innerHTML='<div class="card"><h2>Carte actuelle</h2><p class="msg">Le compte de démonstration n\'a pas de carte en direct.</p></div>';return}
   CM.sig="";box.innerHTML=`<div class="card"><h2 id="cmt">Carte actuelle</h2>
    <div class="mapnav"><span></span><span id="sd-top"></span><span></span><span id="sd-left"></span><canvas id="cv" width="${CW}" height="${CHT}"></canvas><span id="sd-right"></span><span></span><span id="sd-bottom"></span><span></span></div>
-   <p class="hint" id="cmi"></p></div>`;
+   <p class="hint" id="cmi"></p></div><div class="card" id="cmel" style="display:none"></div>`;
   const cv=$("#cv"),pos=e=>{const r=cv.getBoundingClientRect();return cellAt((e.clientX-r.left)*CW/r.width,(e.clientY-r.top)*CHT/r.height)};
   cv.onmousemove=e=>{const c=pos(e);if(c!==CM.hover){CM.hover=c;cv.title=c==null?"":"case "+c;drawCurMap()}};
   cv.onmouseleave=()=>{CM.hover=null;drawCurMap()};
@@ -232,7 +232,7 @@ async function changeMap(side){
 async function refreshCurMap(){
   const box=$("#curmap");if(!box||!$("#cv"))return;
   let v;try{v=await api(`/api/accounts/${sel}/mapview`)}catch(e){setInfo(e.message,true);return}
-  const sig=JSON.stringify([v.map_id,v.me,v.actors,v.busy,v.live,v.sides&&Object.values(v.sides).map(s=>s.available)]);
+  const sig=JSON.stringify([v.map_id,v.me,v.actors,v.busy,v.live,v.elements,v.sides&&Object.values(v.sides).map(s=>s.available)]);
   if(v.map_id!==CM.id){CM.id=v.map_id;CM.sel=null;CM.path=null}
   if(sig===CM.sig)return;CM.sig=sig;CM.v=v;
   const i=v.info,t=$("#cmt");
@@ -243,6 +243,11 @@ async function refreshCurMap(){
     el.innerHTML=`<button class="side" data-s="${side}" ${ok?"":"disabled"} title="${esc(s&&s.to?"Aller vers "+(s.to.subarea||"")+" ["+s.to.x+", "+s.to.y+"]":s&&s.available?"Carte voisine ("+lbl+")":"Pas de sortie ("+lbl+")")}">${ar}<small>${s&&s.to?`[${esc(s.to.x)}, ${esc(s.to.y)}]`:s&&s.available?lbl:"—"}</small></button>`;
     el.firstChild.onclick=()=>changeMap(side);
   }
+  const cel=$("#cmel");
+  if(cel){const els=v.elements||[];cel.style.display=els.length?"":"none";
+    cel.innerHTML=els.length?`<h2>Éléments interactifs <span class="msg">· portes, escaliers, ressources… Une porte utilisée est apprise pour l'autopilote.</span></h2><table>${els.map(e=>`<tr><td>élément ${esc(e.element)} <span class="msg">type ${esc(e.type)}</span></td><td class="msg">${e.cell==null?"case inconnue":"case "+esc(e.cell)}</td><td class="msg">${e.to?"→ "+esc(e.to.subarea||"")+" ["+esc(e.to.x)+", "+esc(e.to.y)+"]":""}</td><td class="n"><button data-el="${e.element}" ${v.live&&!v.busy?"":"disabled"}>Utiliser</button></td></tr>`).join("")}</table>`:"";
+    cel.querySelectorAll("[data-el]").forEach(b=>b.onclick=async()=>{if(!confirm("Utiliser cet élément ? Cela peut vous déplacer sur une autre carte."))return;
+      try{await api(`/api/accounts/${sel}/useelement`,"POST",{element:+b.dataset.el});setInfo("Utilisation de l'élément…")}catch(err){setInfo("Impossible : "+err.message,true)}refreshCurMap()})}
   setInfo(!v.mov?"Données de la carte indisponibles (lance tools/index_maps.py)."
     :v.busy?"En cours : "+v.busy
     :!v.live?"Personnage non connecté : dernière carte connue. Connecte-le pour te déplacer."
@@ -264,6 +269,7 @@ function drawCurMap(){
     g.strokeStyle=col("--line");g.lineWidth=1;g.stroke();
   }
   if(CM.path&&CM.path.length>1){g.beginPath();CM.path.forEach((c,k)=>{const[x,y]=cellC(c);k?g.lineTo(x,y):g.moveTo(x,y)});g.strokeStyle=col("--acc");g.lineWidth=2;g.stroke()}
+  for(const e of(v.elements||[])){if(e.cell==null)continue;const[x,y]=cellC(e.cell);g.fillStyle="#d98b1f";g.fillRect(x-4,y-4,8,8)}
   for(const[id,c]of Object.entries(v.actors||{})){const[x,y]=cellC(c);g.beginPath();g.arc(x,y,4,0,7);g.fillStyle=col("--mut");g.fill()}
   for(const c of[CM.sel,CM.hover]){if(c==null)continue;dia(c);g.strokeStyle=col("--fg");g.lineWidth=2;g.stroke()}
   if(v.me!=null){const[x,y]=cellC(v.me);g.beginPath();g.arc(x,y,7,0,7);g.fillStyle=col("--acc");g.fill();g.strokeStyle="#fff";g.lineWidth=2;g.stroke()}

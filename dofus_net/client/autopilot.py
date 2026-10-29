@@ -7,7 +7,7 @@ It also stops when a fight starts, when the character disconnects, after MAX_ATT
 
 Travel uses %APPDATA%/dofus_net/mapgraph.json (tools/index_maps.py): {map id: [top, bottom, left, right] neighbour ids}."""
 import collections, json, os, re, threading, time
-import gamedata, gamequests, store
+import gamedata, gamedoors, gamequests, store
 
 GRAPH_PATH = os.path.join(os.path.dirname(store.PATH), "mapgraph.json")
 SIDES = ("top", "bottom", "left", "right")
@@ -31,18 +31,21 @@ def graph():
 
 
 def route(start, goal):
-    """Shortest sequence of sides ('top'/'bottom'/'left'/'right') from map `start` to map `goal`, or None."""
-    g = graph(); start, goal = int(start), int(goal)
+    """Shortest list of steps from map `start` to map `goal`, or None. A step is ('side', 'right'|'left'|'top'|'bottom') or
+    ('door', {skill, element, cell, to}) from the learned passages (gamedoors)."""
+    g = graph(); doors = gamedoors.load(); start, goal = int(start), int(goal)
     if start == goal: return []
     prev = {start: None}; queue = collections.deque([start])
     while queue:
         cur = queue.popleft()
-        for side, nxt in zip(SIDES, g.get(cur, ())):
-            if not nxt or nxt in prev: continue
-            prev[nxt] = (cur, side)
+        edges = [(nxt, ("side", side)) for side, nxt in zip(SIDES, g.get(cur, ())) if nxt]
+        edges += [(int(d["to"]), ("door", d)) for d in doors.get(cur, ()) if d.get("to")]
+        for nxt, step in edges:
+            if nxt in prev: continue
+            prev[nxt] = (cur, step)
             if nxt == goal:
                 out = []
-                while prev[nxt]: nxt, side = prev[nxt][0], prev[nxt][1]; out.append(side)
+                while prev[nxt]: out.append(prev[nxt][1]); nxt = prev[nxt][0]
                 return out[::-1]
             queue.append(nxt)
     return None
@@ -150,10 +153,12 @@ class Autopilot:
             if not self._alive(): return False
             if cur == goal: return True
             r = route(cur, goal)
-            if r is None: self.say("error", f"aucune route de la carte {cur} à la carte {goal} (porte, zaap ou carte inconnue ?)"); return False
-            side = r[0]
-            self.say("info", f"voyage vers {goal} : {len(r)} carte(s), prochaine sortie {side}")
-            try: self._act(f"Changer de carte ({side})", lambda: self.s._do_change_map(side))
+            if r is None: self.say("error", f"aucune route de la carte {cur} à la carte {goal} (porte non apprise, zaap ou carte inconnue ?)"); return False
+            kind, arg = r[0]
+            self.say("info", f"voyage vers {goal} : {len(r)} étape(s), prochaine : " + (arg if kind == "side" else f"porte (élément {arg['element']})"))
+            try:
+                if kind == "side": self._act(f"Changer de carte ({arg})", lambda: self.s._do_change_map(arg))
+                else: self._act(f"Utiliser l'élément {arg['element']}", lambda: self.s._do_use(arg["element"]))
             except RuntimeError as e: self.say("error", f"voyage interrompu : {e}"); return False
         self.say("error", "voyage trop long, abandon"); return False
 

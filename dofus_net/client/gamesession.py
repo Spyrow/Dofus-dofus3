@@ -8,7 +8,7 @@ closed (a second session on the same account kicks the first, in both directions
 Chat: the chat messages are NOT decoded yet (none in the captures so far): `Session.chat` stays empty until gamestate
 learns the message; see add_chat()."""
 import collections, threading, time
-import accounts, shield, gamestate, gamedata, gamemaps, gamequests, autopilot, login
+import accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, autopilot, login
 from wire import parse, dec_varint, enc_varint, f_bytes, f_varint, request
 from haapi import create_game_token, GAME_IDS
 
@@ -32,6 +32,7 @@ class Session:
         self.character = self.map = None
         # current map state (reset on every jow): map id, our cell, other actors {id: cell}, our actor id
         self.map_id = self.my_cell = self.char_id = None; self.actors = {}; self.conn = None
+        self.elements = {}   # interactive elements of the current map (from jnj)
         self.in_fight = False; self.auto = autopilot.Autopilot(self)
         self.npcs = {}; self.quests = {}; self.dialog = None   # actor id -> template id; quest id -> (step, objectives); open dialog
         self._dialog_event = threading.Event(); self.recent = collections.deque(maxlen=200)   # (time, message type) of everything received
@@ -67,12 +68,14 @@ class Session:
             self.char_id = gamestate.selection(body)[0]
         elif t == gamestate.JOW:
             mid = next((v for f, v in parse(body) if f == 1 and isinstance(v, int)), None)
-            with self._lock: self.map_id, self.my_cell, self.actors, self.npcs = mid, None, {}, {}
+            with self._lock: self.map_id, self.my_cell, self.actors, self.npcs, self.elements = mid, None, {}, {}, {}
             self._mapchanged.set()
         elif t in (login.JNJ, login.JNS):      # jnj {3: [entry]} / jns {1: entry}; entry = {1: actor id, 2: {3: cell, 4: direction}, 3: ...}
             for f, v in parse(body):
                 if f != (3 if t == login.JNJ else 1) or not isinstance(v, bytes): continue
                 self._register_actor(v)
+            if t == login.JNJ:
+                with self._lock: self.elements.update(gamedoors.elements(body))
         elif t == login.JXI:
             self.in_fight = True; self.log("event", "Combat engagé")
         elif t == login.JWP:
@@ -140,6 +143,9 @@ class Session:
         info = gamedata.map_info(mid) if mid else None
         out = {"live": live, "map_id": mid, "info": info, "me": me, "busy": busy,
                "actors": {str(k): v for k, v in actors.items() if k != self.char_id}}
+        known = {e["element"]: e for e in gamedoors.from_map(mid)} if mid else {}
+        out["elements"] = [{"element": k, "skill": v["skill"], "cell": v["cell"], "type": v["type"],
+                            "to": gamedata.map_info(known[k]["to"]) if k in known else None} for k, v in list(self.elements.items())]
         out["npcs"] = [{"actor": a, "cell": actors.get(a), "tpl": tpl, "name": gamedata.quest_data("npcs", tpl) or f"PNJ {tpl}"}
                        for a, tpl in list(self.npcs.items())]
         if m:
@@ -216,6 +222,35 @@ class Session:
 
     def change_map(self, side):
         return self.start_action(f"Changer de carte ({side})", lambda: self._do_change_map(side))
+
+    def _do_use(self, element):
+        """Walk next to an interactive element, use it (itz) and learn where it leads if the map changes."""
+        e = self.elements.get(element)
+        if not e: raise RuntimeError("élément introuvable sur la carte")
+        frm = self.map_id
+        if e["cell"] is not None and self.my_cell != e["cell"]:
+            x, y = gamemaps.to_xy(e["cell"])
+            adjacent = {gamemaps.from_xy(x + dx, y + dy) for dx, dy in gamemaps.DIRS} - {None}
+            if self.my_cell not in adjacent:
+                best = None
+                for c in adjacent:
+                    path, _ = self.plan(c)
+                    if path and (best is None or len(path) < len(best)): best = path
+                if best is None: raise RuntimeError("aucune case accessible à côté de l'élément")
+                if len(best) > 1: self._walk(best)
+        self._mapchanged.clear()
+        self._send(login.ITZ, f_varint(1, e["skill"]) + f_varint(3, element))
+        self.log("action", f"→ itz : élément {element} (compétence {e['skill']})")
+        if self._mapchanged.wait(8):
+            time.sleep(1.0)
+            new = gamedoors.record(frm, e["skill"], element, e["cell"], self.map_id)
+            info = gamedata.map_info(self.map_id)
+            self.log("event", f"Passage {'appris' if new else 'connu'} : {frm} → {self.map_id}" + (f" ({info['subarea']} [{info['x']}, {info['y']}])" if info else ""))
+        else:
+            self.log("warn", "aucun changement de carte après l'utilisation de l'élément")
+
+    def use_element(self, element):
+        return self.start_action(f"Utiliser l'élément {element}", lambda: self._do_use(element))
 
     # ---- quests and dialogs ----
     def questview(self):
