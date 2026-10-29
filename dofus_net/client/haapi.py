@@ -36,3 +36,17 @@ def create_api_key(login, password, lang="fr", certificate_id=None, certificate_
             return json.load(r)
     except urllib.error.HTTPError as e:
         raise SystemExit(f"HAAPI {e.code}: {e.read().decode()[:300]}")
+
+
+def refresh_api_key(key, refresh_token, lang="fr"):
+    """POST Api/RefreshApiKey (header APIKEY = current key) -> {key, account_id, refresh_token}.
+    The refresh_token is rotated on every call: persist the new one."""
+    body = urllib.parse.urlencode({"refresh_token": refresh_token, "long_life_token": "true",
+                                   "shop_key": SHOP_KEY, "payment_mode": PAYMENT_MODE, "lang": lang}).encode()
+    req = urllib.request.Request(HAAPI_URL + "json/Ankama/v5/Api/RefreshApiKey", body, {
+        "Content-Type": "application/x-www-form-urlencoded", "APIKEY": key, "User-Agent": "Zaap pkce_login"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        raise SystemExit(f"HAAPI {e.code}: {e.read().decode()[:300]}")
