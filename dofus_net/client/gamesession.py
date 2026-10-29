@@ -8,12 +8,12 @@ closed (a second session on the same account kicks the first, in both directions
 Chat: the chat messages are NOT decoded yet (none in the captures so far): `Session.chat` stays empty until gamestate
 learns the message; see add_chat()."""
 import collections, threading, time
-import accounts, shield, gamestate, gamedata, gamemaps, gamequests, login
+import accounts, shield, gamestate, gamedata, gamemaps, gamequests, autopilot, login
 from wire import parse, dec_varint, enc_varint, f_bytes, f_varint, request
 from haapi import create_game_token, GAME_IDS
 
 QUEST_MSGS = {login.ICA, login.ICJ, login.ICB, login.IBG, login.ILX, login.ILF, login.KIS}
-KEEP = {login.JNJ, login.JNS, login.JNZ} | QUEST_MSGS | {gamestate.KSC, gamestate.KRG, gamestate.IRL, gamestate.IQX, gamestate.IPE, gamestate.ISM, gamestate.JOW}
+KEEP = {login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP} | QUEST_MSGS | {gamestate.KSC, gamestate.KRG, gamestate.IRL, gamestate.IQX, gamestate.IPE, gamestate.ISM, gamestate.JOW}
 HEARTBEAT = 5          # seconds, same cadence as the real client's kne
 FLUSH = 2              # seconds between snapshot writes while connected
 
@@ -32,6 +32,7 @@ class Session:
         self.character = self.map = None
         # current map state (reset on every jow): map id, our cell, other actors {id: cell}, our actor id
         self.map_id = self.my_cell = self.char_id = None; self.actors = {}; self.conn = None
+        self.in_fight = False; self.auto = autopilot.Autopilot(self)
         self.npcs = {}; self.quests = {}; self.dialog = None   # actor id -> template id; quest id -> (step, objectives); open dialog
         self._dialog_event = threading.Event(); self.recent = collections.deque(maxlen=200)   # (time, message type) of everything received
         self._act = threading.Lock(); self.busy = None; self._moved = threading.Event(); self._mapchanged = threading.Event()
@@ -72,6 +73,10 @@ class Session:
             for f, v in parse(body):
                 if f != (3 if t == login.JNJ else 1) or not isinstance(v, bytes): continue
                 self._register_actor(v)
+        elif t == login.JXI:
+            self.in_fight = True; self.log("event", "Combat engagé")
+        elif t == login.JWP:
+            self.in_fight = False; self.log("event", "Combat terminé")
         elif t == login.ICA:
             with self._lock: self.quests = {q: (st, objs) for q, st, objs in gamequests.active_quests(body)}
             self.log("event", f"Quêtes en cours : {len(self.quests)}")
@@ -187,27 +192,30 @@ class Session:
         threading.Thread(target=run, daemon=True).start()
         return None
 
+    def _do_go(self, to):
+        path, err = self.plan(to)
+        if err: raise RuntimeError(err)
+        if len(path) > 1: self._walk(path)
+
+    def _do_change_map(self, side):
+        m = self.mapdata(); target = (m or {}).get("neighbours", {}).get(side)
+        if not m or not target: raise RuntimeError(f"pas de carte voisine ({side})")
+        best = None
+        for c in gamemaps.exit_cells(m, side):
+            path, _ = self.plan(c)
+            if path and (best is None or len(path) < len(best)): best = path
+        if best is None: raise RuntimeError(f"aucune case de sortie atteignable ({side})")
+        if len(best) > 1: self._walk(best)
+        self._mapchanged.clear()
+        self._send(login.JOC, f_varint(2, target)); self.log("action", f"→ joc : carte voisine {side} ({target})")
+        if not self._mapchanged.wait(8): raise RuntimeError("le serveur n'a pas changé de carte (jow)")
+        time.sleep(1.0)   # let the new map's actors arrive (jnj) before the next decision
+
     def go(self, to):
-        def fn():
-            path, err = self.plan(to)
-            if err: raise RuntimeError(err)
-            if len(path) > 1: self._walk(path)
-        return self.start_action(f"Aller à la case {to}", fn)
+        return self.start_action(f"Aller à la case {to}", lambda: self._do_go(to))
 
     def change_map(self, side):
-        def fn():
-            m = self.mapdata(); target = (m or {}).get("neighbours", {}).get(side)
-            if not m or not target: raise RuntimeError(f"pas de carte voisine ({side})")
-            best = None
-            for c in gamemaps.exit_cells(m, side):
-                path, _ = self.plan(c)
-                if path and (best is None or len(path) < len(best)): best = path
-            if best is None: raise RuntimeError(f"aucune case de sortie atteignable ({side})")
-            if len(best) > 1: self._walk(best)
-            self._mapchanged.clear()
-            self._send(login.JOC, f_varint(2, target)); self.log("action", f"→ joc : carte voisine {side} ({target})")
-            if not self._mapchanged.wait(8): raise RuntimeError("le serveur n'a pas changé de carte (jow)")
-        return self.start_action(f"Changer de carte ({side})", fn)
+        return self.start_action(f"Changer de carte ({side})", lambda: self._do_change_map(side))
 
     # ---- quests and dialogs ----
     def questview(self):
@@ -215,42 +223,44 @@ class Session:
         d = None
         if dialog:
             tpl = npcs.get(dialog.get("actor")); d = dict(dialog, npc=gamedata.quest_data("npcs", tpl) if tpl else None)
-        return {"live": self.status == "connected", "quests": [gamequests.quest_view(q, st, objs) for q, (st, objs) in quests.items()], "dialog": d,
+        return {"auto": {"on": self.auto.on, "goal": self.auto.goal}, "live": self.status == "connected", "quests": [gamequests.quest_view(q, st, objs) for q, (st, objs) in quests.items()], "dialog": d,
                 "npcs": [{"actor": a, "cell": actors.get(a), "name": gamedata.quest_data("npcs", t) or f"PNJ {t}"} for a, t in npcs.items()]}
 
-    def talk(self, actor):
+    def _do_talk(self, actor):
         """Walk next to the NPC, then send ilt (action 3 = Parler) and wait for the dialog to open."""
-        def fn():
-            with self._lock: cell = self.actors.get(actor); mid = self.map_id
-            m = self.mapdata()
-            if cell is None or not m: raise RuntimeError("PNJ introuvable sur la carte")
-            x, y = gamemaps.to_xy(cell)
-            adjacent = {gamemaps.from_xy(x + dx, y + dy) for dx, dy in gamemaps.DIRS} - {None}
-            if self.my_cell not in adjacent:
-                best = None
-                for c in adjacent:
-                    path, _ = self.plan(c)
-                    if path and (best is None or len(path) < len(best)): best = path
-                if best is None: raise RuntimeError("aucune case accessible à côté du PNJ")
-                if len(best) > 1: self._walk(best)
-            self._dialog_event.clear()
-            self._send(login.ILT, f_varint(1, 3) + f_varint(2, mid) + f_varint(3, actor))
-            self.log("action", f"→ ilt : parler au PNJ {actor}")
-            t0 = time.time()
-            if not self._dialog_event.wait(5):
-                seen = {}
-                for ts, t, b in self.recent:
-                    if ts >= t0 and str(t) not in seen and t not in ("knb", None): seen[str(t)] = b.hex()[:48]
-                raise RuntimeError("le PNJ n'a pas répondu (reçu : " + ("; ".join(f"{t}={h or '-'}" for t, h in seen.items()) or "rien") + ")")
-        return self.start_action(f"Parler au PNJ {actor}", fn)
+        with self._lock: cell = self.actors.get(actor); mid = self.map_id
+        m = self.mapdata()
+        if cell is None or not m: raise RuntimeError("PNJ introuvable sur la carte")
+        x, y = gamemaps.to_xy(cell)
+        adjacent = {gamemaps.from_xy(x + dx, y + dy) for dx, dy in gamemaps.DIRS} - {None}
+        if self.my_cell not in adjacent:
+            best = None
+            for c in adjacent:
+                path, _ = self.plan(c)
+                if path and (best is None or len(path) < len(best)): best = path
+            if best is None: raise RuntimeError("aucune case accessible à côté du PNJ")
+            if len(best) > 1: self._walk(best)
+        self._dialog_event.clear()
+        self._send(login.ILT, f_varint(1, 3) + f_varint(2, mid) + f_varint(3, actor))
+        self.log("action", f"→ ilt : parler au PNJ {actor}")
+        t0 = time.time()
+        if not self._dialog_event.wait(5):
+            seen = {}
+            for ts, t, b in self.recent:
+                if ts >= t0 and str(t) not in seen and t not in ("knb", None): seen[str(t)] = b.hex()[:48]
+            raise RuntimeError("le PNJ n'a pas répondu (reçu : " + ("; ".join(f"{t}={h or '-'}" for t, h in seen.items()) or "rien") + ")")
+
+    def _do_reply(self, rid):
+        if not self.dialog or rid not in [r["id"] for r in self.dialog.get("replies", [])]: raise RuntimeError("réponse indisponible")
+        self._dialog_event.clear()
+        self._send(login.IKY, f_varint(1, rid)); self.log("action", f"→ iky : réponse {rid}")
+        if not self._dialog_event.wait(5): raise RuntimeError("pas de suite de dialogue")
+
+    def talk(self, actor):
+        return self.start_action(f"Parler au PNJ {actor}", lambda: self._do_talk(actor))
 
     def reply(self, rid):
-        def fn():
-            if not self.dialog or rid not in [r["id"] for r in self.dialog.get("replies", [])]: raise RuntimeError("réponse indisponible")
-            self._dialog_event.clear()
-            self._send(login.IKY, f_varint(1, rid)); self.log("action", f"→ iky : réponse {rid}")
-            if not self._dialog_event.wait(5): raise RuntimeError("pas de suite de dialogue")
-        return self.start_action(f"Répondre ({rid})", fn)
+        return self.start_action(f"Répondre ({rid})", lambda: self._do_reply(rid))
 
     # ---- lifecycle ----
     def start(self):
@@ -262,6 +272,7 @@ class Session:
         return True
 
     def stop(self):
+        self.auto.stop()
         if self.status in ("connecting", "connected"): self.log("action", "Déconnexion demandée")
         self._stop.set()
 
@@ -288,7 +299,7 @@ class Session:
                 self.recent.append((time.time(), t, body))
                 if t not in KEEP: return
                 self._on_map_message(t, body)
-                if t in (login.JNJ, login.JNS, login.JNZ) or t in QUEST_MSGS: return
+                if t in (login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP) or t in QUEST_MSGS: return
                 if t == gamestate.KRG: state["msgs"] = [m for m in state["msgs"] if m[0] != gamestate.KRG]   # the latest wins
                 state["msgs"].append((t, body)); state["dirty"] = True
                 if t == gamestate.KSC:

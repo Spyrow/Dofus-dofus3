@@ -44,6 +44,12 @@ Le panneau de succès fait `mdm{onglet}` -> `mdo` (liste de succès) : ce ne son
   Un `ilm` vide en réponse à `ilt` = refus (PNJ sans dialogue pour l'état de quête courant).
 - Succès : `mdw {-1}` réclame les récompenses (`mdj {id}` par succès obtenu).
 
+## Autopilote de quêtes (`client/autopilot.py`)
+- Objectifs gérés : types 1 / 9 (« Aller voir / Retourner voir #1 » : voyage -> parler -> répondre). Voyage = BFS sur `mapgraph.json` (voisines des bundles), un `joc` par carte.
+- Non gérés (arrêt + message) : combats, fabrication, remise d'objets, découverte, et tout passage par un élément interactif (porte, zaap) :
+  `itz {1: ?, 3: id élément}` -> `jow`. Les éléments existent dans les bundles de carte (`references[].data.<interactiveId>k__BackingField`, avec une position en pixels)
+  mais la carte de destination est décidée par le serveur (non présente dans les données) : les zones du tutoriel, Incarnam et Astrub ne sont donc pas reliées dans le graphe.
+
 ## Combat (observé dans une capture, NON implémenté)
 - Entrée : `igk` (vide) puis, 1 s plus tard, serveur `jxi/jwj/jxh/jxm` (placement, liste des combattants avec leur case) ; `jxj {1:1}` = prêt -> serveur `juo` (combattants, cases) + `jti {2: id}` (début de tour).
 - Pendant le combat : `jok` (déplacement, même format qu'en exploration, avec l'id de la carte de combat), `jsr {1: id sort, 2: case}` (lancer un sort),

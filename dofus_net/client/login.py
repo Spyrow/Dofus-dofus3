@@ -13,6 +13,7 @@ import shield
 # obfuscated names, valid for the analysed build only: re-derive with tools/scan_connect.py after each update
 KNC, KOG, MEQ, KSJ, KSC, JPX, KOD, KTA = "knc", "kog", "meq", "ksj", "ksc", "jpx", "kod", "kta"
 IZN, JOW, KJT, JPE = "izn", "jow", "kjt", "jpe"
+JXI, JWP = "jxi", "jwp"   # fight start (placement) / fight end (observed once)
 JNS = "jns"   # one actor arriving on the map
 ILT, IKY = "ilt", "iky"   # talk to an NPC (action, map, actor) / choose a dialog reply
 ILX, ILF, KIS = "ilx", "ilf", "kis"   # dialog opened / next dialog step (replies + message) / dialog closed

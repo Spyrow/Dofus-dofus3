@@ -279,6 +279,9 @@ async function refreshQuests(a){
   const sig=JSON.stringify(v);if(sig===qSig&&box.firstChild)return;qSig=sig;
   const d=v.dialog,off=!v.live;
   box.innerHTML=
+   `<div class="card"><h2>Autopilote de quêtes <span class="badge ${v.auto.on?"connected":""}">${v.auto.on?"actif":"arrêté"}</span></h2>
+     <p class="msg">${v.auto.on?esc(v.auto.goal||"…"):"Voyage jusqu'au PNJ de l'objectif, lui parle et répond au dialogue. S'arrête sur un combat, un objectif non géré ou un échec (voir la Console)."}</p>
+     <button class="${v.auto.on?"d":"p"}" id="apbtn" ${v.live?"":"disabled"}>${v.auto.on?"Arrêter l'autopilote":"Lancer l'autopilote"}</button></div>`+
    (d?`<div class="card"><h2>Dialogue${d.npc?` <span class="msg">· ${esc(d.npc)}</span>`:""}</h2>
       <p style="white-space:pre-wrap">${esc(d.text||"…")}</p>
       ${(d.replies||[]).map(r=>`<p style="margin:6px 0"><button data-reply="${r.id}">${esc(r.text)}</button></p>`).join("")||'<p class="msg">Pas de réponse proposée.</p>'}</div>`:"")+
@@ -286,6 +289,7 @@ async function refreshQuests(a){
     <div class="card"><h2>Quêtes en cours <span class="msg">· ${v.quests.length}</span></h2>${v.quests.map(q=>`<div style="margin:12px 0"><b>${esc(q.name)}</b>
       ${q.desc?`<div class="stats">${esc(q.desc)}</div>`:""}
       ${q.objectives.map(o=>`<div class="row"><span>${o.active?"○":"✓"} ${esc(o.text)}</span><span class="msg">${esc(o.where||"")}</span></div>`).join("")}</div>`).join("")||'<p class="msg">Aucune quête (connecte le personnage).</p>'}</div>`;
+  const ap=$("#apbtn");if(ap)ap.onclick=()=>questAct(a,"autopilot",{on:!v.auto.on});
   box.querySelectorAll("[data-talk]").forEach(b=>b.onclick=()=>questAct(a,"talk",{actor:+b.dataset.talk}));
   box.querySelectorAll("[data-reply]").forEach(b=>b.onclick=()=>questAct(a,"reply",{id:+b.dataset.reply}));
 }

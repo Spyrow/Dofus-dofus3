@@ -136,6 +136,12 @@ class H(BaseHTTPRequestHandler):
                 if not sess.start(): return self._json({"error": "session déjà active"}, 409)
             else: sess.stop()
             self._json(sess.view(sess.seq), 202)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/autopilot", p):
+            sess = gamesession.session(m[1])
+            if body.get("on"):
+                if not sess.auto.start(): return self._json({"error": "impossible : personnage non connecté ou autopilote déjà actif"}, 409)
+            else: sess.auto.stop()
+            self._json({"ok": True}, 202)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/(talk|reply)", p):
             try: n = int(body.get("actor" if m[2] == "talk" else "id"))
             except (TypeError, ValueError): return self._json({"error": "bad request"}, 400)
