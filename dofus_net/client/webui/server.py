@@ -97,8 +97,19 @@ class H(BaseHTTPRequestHandler):
             data = accounts.sample_character() if aid == "demo" else accounts.load_character(aid)
             if data is None: self._json({"error": "no_snapshot"}, 404)
             else: self._json(data)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/ai", p):
+            data = accounts.load_ai(m[1])
+            self._json(data) if data is not None else self._json({"error": "no_ai"}, 404)
         else:
             self._json({"error": "not found"}, 404)
+
+    def do_PUT(self):
+        if not self._guard(): return
+        m = re.fullmatch(r"/api/accounts/(\w+)/ai", self.path.split("?")[0])
+        if not m: return self._json({"error": "not found"}, 404)
+        if int(self.headers.get("Content-Length") or 0) > 65536: return self._json({"error": "too large"}, 413)
+        r = accounts.save_ai(m[1], self._body())
+        self._json(r) if r is not None else self._json({"error": "bad request"}, 400)
 
     def do_POST(self):
         if not self._guard(): return

@@ -69,8 +69,9 @@ def remove(aid):
         accts = _read(); keep = [x for x in accts if x["id"] != aid]
         if len(keep) == len(accts): return False
         _write(keep)
-        try: os.remove(char_path(aid))
-        except OSError: pass
+        for q in (char_path(aid), ai_path(aid)):
+            try: os.remove(q)
+            except OSError: pass
         return True
 
 
@@ -92,6 +93,48 @@ def load_character(aid):
     try:
         with open(char_path(aid), encoding="utf8") as f: return json.load(f)
     except (OSError, ValueError): return None
+
+
+AI_DIR = os.path.join(DIR, "ai")
+MOVES = ("approach", "keep_distance", "stay")
+
+
+def ai_path(aid):
+    return os.path.join(AI_DIR, "".join(c for c in aid if c.isalnum()) + ".json")
+
+
+def load_ai(aid):
+    try:
+        with open(ai_path(aid), encoding="utf8") as f: return json.load(f)
+    except (OSError, ValueError): return None
+
+
+def _num(v, lo, hi):
+    try: v = float(v)
+    except (TypeError, ValueError): return None
+    return int(max(lo, min(hi, v)))
+
+
+def clean_ai(data):
+    """Whitelist/clamp a combat strategy: {move, rules: [{spell, dmin, dmax, self_hp_below, enemy_hp_below, max_per_turn}]}."""
+    if not isinstance(data, dict): return None
+    rules = []
+    for r in (data.get("rules") or [])[:64]:
+        if not isinstance(r, dict) or not str(r.get("spell") or "").strip(): continue
+        rules.append({"spell": str(r["spell"]).strip()[:60], "dmin": _num(r.get("dmin"), 0, 99), "dmax": _num(r.get("dmax"), 0, 99),
+                      "self_hp_below": _num(r.get("self_hp_below"), 1, 100), "enemy_hp_below": _num(r.get("enemy_hp_below"), 1, 100),
+                      "max_per_turn": _num(r.get("max_per_turn"), 1, 99)})
+    return {"move": data.get("move") if data.get("move") in MOVES else "approach", "rules": rules}
+
+
+def save_ai(aid, data):
+    """Strategies are plain data (nothing executes them yet). Returns the cleaned strategy, or None if invalid / unknown account."""
+    data = clean_ai(data)
+    if data is None or not (aid == "demo" or get(aid)): return None
+    with _lock:
+        os.makedirs(AI_DIR, exist_ok=True)
+        with open(ai_path(aid), "w", encoding="utf8") as f: json.dump(data, f, indent=1, ensure_ascii=False)
+    return data
 
 
 def sample_character():

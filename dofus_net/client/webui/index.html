@@ -24,6 +24,8 @@ button.p{background:var(--acc);border-color:var(--acc);color:#fff}button.d{color
 .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}.tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 table{width:100%;border-collapse:collapse;margin-top:8px}th,td{text-align:left;padding:6px 8px;border-bottom:1px dashed var(--line);vertical-align:top}th{color:var(--mut);font-weight:500;font-size:13px}.n{text-align:right}
 input{font:inherit;width:100%;max-width:320px;padding:6px 10px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+td input,td select{max-width:none;width:100%;min-width:56px}td input[type=number]{width:70px}select{font:inherit;padding:5px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+.log li{margin:2px 0}.log .mv{color:var(--mut)}.hint{font-size:13px;color:var(--mut)}
 @media(max-width:700px){.app{grid-template-columns:1fr}aside{border:0;border-bottom:1px solid var(--line)}}
 </style></head><body>
 <div class="app">
@@ -93,9 +95,11 @@ async function render(){
       ${items.length?`<table><tr><th>Objet</th><th>Type</th><th class="n">Niv.</th><th class="n">Qté</th></tr>${items.map(i=>`<tr><td>${esc(i.name)}</td><td class="msg">${esc(i.type)}</td><td class="n">${esc(i.level)}</td><td class="n">${esc((i.qty??1).toLocaleString("fr-FR"))}</td></tr>`).join("")}</table>`:none}</div>`},
    jobs:()=>`<div class="card"><h2>Métiers</h2>${(d.jobs||[]).map(j=>`<div style="margin:10px 0"><div class="row"><span><b style="color:var(--fg)">${esc(j.name)}</b></span><span>niveau ${esc(j.level)}</span></div>${bar(j.xp_pct)}</div>`).join("")||none}</div>`,
    spells:()=>`<div class="card"><h2>Sorts</h2>${(d.spells||[]).length?`<table><tr><th>Sort</th><th>Élément</th><th class="n">Niv.</th><th class="n">PA</th><th>Portée</th><th class="n">Relance</th></tr>${d.spells.map(x=>`<tr><td><b>${esc(x.name)}</b>${x.desc?`<div class="stats">${esc(x.desc)}</div>`:""}</td><td class="msg">${esc(x.element)}</td><td class="n">${esc(x.level)}</td><td class="n">${esc(x.ap)}</td><td>${esc(x.range)}</td><td class="n">${x.cooldown?esc(x.cooldown)+" t.":"—"}</td></tr>`).join("")}</table>`:none}</div>`};
+  tabs.combat=()=>'<div id="combat"><p class="msg">Chargement…</p></div>';
   if(!tabs[tab])tab="fiche";
-  $("#char").innerHTML=`<div class="tabs">${[["fiche","Fiche"],["inv","Inventaire"],["jobs","Métiers"],["spells","Sorts"]].map(t=>`<button class="${t[0]===tab?"on":""}" data-t="${t[0]}">${t[1]}</button>`).join("")}</div>`+tabs[tab]();
+  $("#char").innerHTML=`<div class="tabs">${[["fiche","Fiche"],["inv","Inventaire"],["jobs","Métiers"],["spells","Sorts"],["combat","Combat"]].map(t=>`<button class="${t[0]===tab?"on":""}" data-t="${t[0]}">${t[1]}</button>`).join("")}</div>`+tabs[tab]();
   document.querySelectorAll(".tabs button").forEach(e=>e.onclick=()=>{tab=e.dataset.t;try{localStorage.setItem("tab",tab)}catch{};render()});
+  if(tab==="combat")initCombat(a,d);
   const q=$("#invq");if(q){q.oninput=()=>{invQ=q.value;const pos=q.selectionStart;render().then(()=>{const n=$("#invq");n&&(n.focus(),n.setSelectionRange(pos,pos))})};}
 }
 async function act(fn){
@@ -116,6 +120,84 @@ $("#add").onclick=async()=>{
     loadList();
   },1500);
 };
+
+// ---- Combat: strategy editor + dry-run simulator (nothing here talks to the game) ----
+let aiDraft=null;   // {id,data,dirty}: survives live re-renders so unsaved edits are not lost
+const rangeOf=r=>{const m=/(\d+)\s*-\s*(\d+)/.exec(r||"");return m?[+m[1],+m[2]]:[1,1]};
+function defaultAI(spells){
+  return {move:"approach",rules:[...spells].sort((x,y)=>(y.ap||0)-(x.ap||0)).map(x=>{const [lo,hi]=rangeOf(x.range);
+    return {spell:x.name,dmin:lo,dmax:hi,self_hp_below:null,enemy_hp_below:null,max_per_turn:x.cooldown>0?1:null}})};
+}
+function simulate(ai,spells,st){
+  let {pa,pm,dist}=st;const log=[],used={},sp=n=>spells.find(x=>x.name===n);
+  const ok=r=>(r.self_hp_below==null||st.selfHp<r.self_hp_below)&&(r.enemy_hp_below==null||st.enemyHp<r.enemy_hp_below);
+  const bounds=r=>{const s=sp(r.spell),[lo,hi]=rangeOf(s&&s.range);return [r.dmin??lo,r.dmax??hi]};
+  const live=ai.rules.filter(r=>sp(r.spell)&&ok(r));
+  if(live.length&&ai.move!=="stay"){
+    const hi=Math.max(...live.map(r=>bounds(r)[1])),from=dist;
+    while(pm>0&&((ai.move==="approach"&&dist>hi)||(ai.move==="keep_distance"&&dist<hi))){dist+=ai.move==="approach"?-1:1;pm--}
+    if(dist!==from)log.push({mv:1,t:`Déplacement : distance ${from} → ${dist} (${st.pm-pm} PM)`});
+  }
+  for(let n=0;n<60;n++){
+    const r=ai.rules.find(r=>{const s=sp(r.spell);if(!s||!ok(r))return false;const [lo,hi]=bounds(r),cap=r.max_per_turn??(s.cooldown>0?1:99);
+      return dist>=lo&&dist<=hi&&pa>=Math.max(1,s.ap||0)&&(used[r.spell]||0)<cap});
+    if(!r)break;const s=sp(r.spell);pa-=Math.max(1,s.ap||0);used[r.spell]=(used[r.spell]||0)+1;
+    log.push({t:`Lance « ${r.spell} » (${s.ap||0} PA, reste ${pa})`});
+  }
+  if(!log.some(l=>!l.mv))log.push({t:"Aucun sort lançable : la stratégie passerait son tour."});
+  log.push({mv:1,t:`Fin de tour : ${pa} PA et ${pm} PM restants, distance ${dist}.`});
+  return log;
+}
+async function initCombat(a,d){
+  const box=$("#combat"),spells=d.spells||[];
+  if(!aiDraft||aiDraft.id!==a.id){
+    try{aiDraft={id:a.id,data:await api(`/api/accounts/${a.id}/ai`),dirty:false}}
+    catch(e){aiDraft={id:a.id,data:defaultAI(spells),dirty:true,fresh:true}}
+  }
+  const sim={pa:12,pm:6,dist:6,selfHp:100,enemyHp:100};let out=null,msg="";
+  const num=(k,v,w="")=>`<input type="number" data-k="${k}" value="${v??""}" ${w}>`;
+  const draw=()=>{
+    const ai=aiDraft.data,names=spells.map(s=>s.name);
+    box.innerHTML=`<div class="card"><h2>Stratégie de combat</h2>
+     <p class="hint">Règles évaluées dans l'ordre : à chaque lancer, la première règle dont les conditions sont remplies (distance, PV, PA, relance) est utilisée. Ceci est un éditeur et un simulateur : la stratégie n'est pas exécutée en jeu.</p>
+     ${spells.length?"":'<p class="err">Aucun sort connu pour ce personnage : les règles ne peuvent référencer que les sorts de l\'onglet Sorts.</p>'}
+     <p>Déplacement : <select data-k="move">${[["approach","Se rapprocher de la portée"],["keep_distance","Garder la distance"],["stay","Ne pas bouger"]].map(o=>`<option value="${o[0]}" ${ai.move===o[0]?"selected":""}>${o[1]}</option>`).join("")}</select></p>
+     <table><tr><th>#</th><th>Sort</th><th>Dist. min</th><th>Dist. max</th><th>Mes PV &lt; %</th><th>PV ennemi &lt; %</th><th>Max/tour</th><th></th></tr>
+     ${ai.rules.map((r,i)=>`<tr data-i="${i}"><td>${i+1}</td><td><select data-f="spell">${(names.includes(r.spell)?names:[r.spell,...names]).map(n=>`<option ${n===r.spell?"selected":""}>${esc(n)}</option>`).join("")}</select></td>
+       ${["dmin","dmax","self_hp_below","enemy_hp_below","max_per_turn"].map(f=>`<td><input type="number" min="0" data-f="${f}" value="${r[f]??""}"></td>`).join("")}
+       <td style="white-space:nowrap"><button data-a="up">↑</button> <button data-a="down">↓</button> <button class="d" data-a="del">✕</button></td></tr>`).join("")}</table>
+     <p><button data-a="add" ${spells.length?"":"disabled"}>+ Règle</button> <button data-a="gen" ${spells.length?"":"disabled"}>Générer depuis les sorts</button>
+        <button class="p" data-a="save" ${aiDraft.dirty?"":"disabled"}>Enregistrer</button> <span class="msg ${msg.startsWith("Erreur")?"err":""}">${esc(msg)||(aiDraft.dirty?"Modifications non enregistrées":"")}</span></p></div>
+     <div class="card"><h2>Simulateur (à blanc)</h2>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(110px,1fr))">${[["pa","PA"],["pm","PM"],["dist","Distance"],["selfHp","Mes PV %"],["enemyHp","PV ennemi %"]].map(f=>`<label class="hint">${f[1]}<br><input type="number" data-s="${f[0]}" value="${sim[f[0]]}" style="width:100%"></label>`).join("")}</div>
+      <p><button class="p" data-a="sim">Simuler un tour</button></p>
+      ${out?`<ol class="log">${out.map(l=>`<li class="${l.mv?"mv":""}">${esc(l.t)}</li>`).join("")}</ol>`:""}
+      <p class="hint">Le simulateur ne calcule pas les dégâts : il montre l'ordre des sorts selon tes PA, PM, la distance et les seuils de PV saisis.</p></div>`;
+  };
+  const dirty=()=>{aiDraft.dirty=true;msg=""};
+  box.onchange=e=>{
+    const t=e.target,tr=t.closest("tr[data-i]");
+    if(t.dataset.s){sim[t.dataset.s]=+t.value||0;return}
+    if(t.dataset.k==="move"){aiDraft.data.move=t.value;dirty();draw();return}
+    if(tr&&t.dataset.f){const r=aiDraft.data.rules[+tr.dataset.i];r[t.dataset.f]=t.dataset.f==="spell"?t.value:(t.value===""?null:+t.value);dirty();draw()}
+  };
+  box.onclick=async e=>{
+    const b=e.target.closest("button[data-a]");if(!b)return;
+    const act=b.dataset.a,rules=aiDraft.data.rules,tr=b.closest("tr[data-i]"),i=tr?+tr.dataset.i:-1;
+    if(act==="add"){const x=spells[0],[lo,hi]=rangeOf(x.range);rules.push({spell:x.name,dmin:lo,dmax:hi,self_hp_below:null,enemy_hp_below:null,max_per_turn:null});dirty()}
+    else if(act==="gen"){if(!rules.length||confirm("Remplacer les règles actuelles ?")){aiDraft.data=defaultAI(spells);dirty()}}
+    else if(act==="del"){rules.splice(i,1);dirty()}
+    else if(act==="up"&&i>0){[rules[i-1],rules[i]]=[rules[i],rules[i-1]];dirty()}
+    else if(act==="down"&&i<rules.length-1){[rules[i+1],rules[i]]=[rules[i],rules[i+1]];dirty()}
+    else if(act==="sim"){out=simulate(aiDraft.data,spells,sim)}
+    else if(act==="save"){
+      try{aiDraft.data=await api(`/api/accounts/${a.id}/ai`,"PUT",aiDraft.data);aiDraft.dirty=false;msg="Enregistré."}
+      catch(err){msg="Erreur : "+err.message}
+    }
+    draw();
+  };
+  draw();
+}
 let evT=null;
 try{
   const es=new EventSource("/api/events");   // live: reload when accounts or character snapshots change on disk
