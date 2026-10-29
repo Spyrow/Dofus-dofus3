@@ -10,8 +10,8 @@ KOG, KOD = 'kog', 'kod'   # obfuscated names, valid for the analysed build only
 HOST, PORT = "dofus2-co-production.ankama-games.com", 5555
 KNC = "knc"   # obfuscated names rotate every build: re-derive from the decoded trace after each update
 
-def main():
-    token = fetch_token().replace("-", "")
+def main(token=None):
+    token = (token or fetch_token()).replace("-", "")
     c = GameConn(HOST, PORT)
     c.send(request(KNC, f_bytes(1, token) + f_bytes(2, "fr")))
     for _ in range(12):

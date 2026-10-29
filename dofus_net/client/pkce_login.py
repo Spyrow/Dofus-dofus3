@@ -60,6 +60,24 @@ def exchange(code, verifier):
         return json.load(r)
 
 
+def login(provider="ankama", timeout=300):
+    """Interactive browser login; returns the /token response (access_token, refresh_token, ...)."""
+    verifier = code_verifier()
+    box, done, srv = wait_for_code(timeout)
+    qs = urllib.parse.urlencode({
+        "code_challenge": code_challenge(verifier), "redirect_uri": REDIRECT_URI, "client_id": CLIENT_ID,
+        "direct": "true", "origin_tracker": "https://www.ankama-launcher.com/launcher"})
+    url = f"{AUTH_URL}login/{provider}?{qs}"
+    print("Opening", url, file=sys.stderr)
+    webbrowser.open(url)
+    try:
+        if not done.wait(timeout):
+            sys.exit("timeout waiting for the redirect")
+    finally:
+        srv.shutdown()
+    return exchange(box["code"], verifier)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--provider", default="ankama")
@@ -72,18 +90,7 @@ def main():
         assert code_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
         print("PKCE ok"); return
 
-    verifier = code_verifier()
-    box, done, srv = wait_for_code(a.timeout)
-    qs = urllib.parse.urlencode({
-        "code_challenge": code_challenge(verifier), "redirect_uri": REDIRECT_URI, "client_id": CLIENT_ID,
-        "direct": "true", "origin_tracker": "https://www.ankama-launcher.com/launcher"})
-    url = f"{AUTH_URL}login/{a.provider}?{qs}"
-    print("Opening", url, file=sys.stderr)
-    webbrowser.open(url)
-    if not done.wait(a.timeout):
-        sys.exit("timeout waiting for the redirect")
-    srv.shutdown()
-    tok = exchange(box["code"], verifier)
+    tok = login(a.provider, a.timeout)
     out = json.dumps(tok, indent=2)
     if a.out:
         open(a.out, "w").write(out); print("written to", a.out, file=sys.stderr)
