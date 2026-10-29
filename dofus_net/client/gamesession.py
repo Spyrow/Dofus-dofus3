@@ -108,7 +108,9 @@ class Session:
             qid = _vi(body, 1)
             name = (gamedata.quest_data("quests", qid) or {}).get("name") or qid
             self.log("event", f"Quête modifiée : « {name} »")
-            try: self._send(login.IBV, f_varint(3, qid) + f_varint(4, -1))   # same as the real client: the server answers with icj
+            try:
+                self._send(login.IBV, f_varint(3, qid) + f_varint(4, -1))   # same as the real client: the server answers with icj
+                self._send(login.IBJ, f_varint(1, qid))                     # a quest that has just started is only loaded by an explicit state request
             except RuntimeError: pass
         elif t == login.IBG:
             oid, qid = _vi(body, 1), _vi(body, 2)

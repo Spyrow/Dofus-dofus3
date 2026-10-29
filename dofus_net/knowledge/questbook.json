@@ -114,7 +114,7 @@
  "quests": {
   "1632": {
    "name": "Le village dans les nuages",
-   "seen": 46,
+   "seen": 50,
    "steps": {
     "2252": {
      "name": "Le village dans les nuages",
@@ -130,7 +130,7 @@
   },
   "1639": {
    "name": "Transport peu commun",
-   "seen": 45,
+   "seen": 49,
    "steps": {
     "2259": {
      "name": "Transport peu commun",
@@ -174,21 +174,22 @@
   },
   "1644": {
    "name": "Coups d'épée dans l'eau",
-   "seen": 5,
+   "seen": 7,
    "steps": {
     "2264": {
      "name": "Coups d'épée dans l'eau",
      "objectives": {
       "9837": "Vaincre x2 Petit Gloot",
       "9838": "Vaincre x2 Plikplok",
-      "9839": "Vaincre x1 Grand Splatch en un seul combat"
+      "9839": "Vaincre x1 Grand Splatch en un seul combat",
+      "9840": "Retourner voir Capitaine des Kerubims"
      }
     }
    }
   },
   "1649": {
    "name": "Produits naturels",
-   "seen": 45,
+   "seen": 49,
    "steps": {
     "2269": {
      "name": "Produits naturels",
@@ -202,7 +203,7 @@
   },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 45,
+   "seen": 49,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",
