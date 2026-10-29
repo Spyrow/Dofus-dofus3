@@ -30,6 +30,11 @@ td input,td select{max-width:none;width:100%;min-width:56px}td input[type=number
 .mc{width:38px;height:30px;background:var(--card);font-size:10px;color:var(--mut);display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none}
 .mc.k{background:color-mix(in srgb,var(--acc) 18%,var(--card))}.mc.t{background:color-mix(in srgb,var(--acc) 38%,var(--card))}.mc.o{cursor:default}
 .mc.me{background:var(--acc);color:#fff;font-weight:700}.mc.sel{outline:2px solid var(--fg);outline-offset:-2px}.mc.ax{background:var(--bg);cursor:default;font-size:11px}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);font-size:13px;color:var(--mut)}
+.badge.connected{color:var(--acc);border-color:var(--acc)}.badge.connecting{color:#b8860b;border-color:#b8860b}.badge.error{color:var(--bad);border-color:var(--bad)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--mut);margin-right:6px}.dot.connected{background:var(--acc)}.dot.connecting{background:#b8860b}.dot.error{background:var(--bad)}
+.cons{font:12.5px/1.5 ui-monospace,Consolas,monospace;height:340px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.cons div{white-space:pre-wrap;word-break:break-word}.cons .t{color:var(--mut)}.cons .warn{color:#b8860b}.cons .error{color:var(--bad)}.cons .action{color:var(--acc)}.cons .event{font-weight:600}
 @media(max-width:700px){.app{grid-template-columns:1fr}aside{border:0;border-bottom:1px solid var(--line)}}
 </style></head><body>
 <div class="app">
@@ -57,7 +62,7 @@ try{sel=localStorage.getItem("sel");tab=localStorage.getItem("tab")||"fiche"}cat
 async function loadList(){
   accts=await api("/api/accounts");
   if(!accts.find(a=>a.id===sel))sel=accts[0]?.id||null;
-  $("#list").innerHTML=accts.map(a=>`<div class="acc ${a.id===sel?"sel":""}" data-id="${esc(a.id)}"><div>${esc(a.label)}<small>${a.demo?"exemple":"MAJ jeton : "+fmt(a.refreshed)}</small></div></div>`).join("");
+  $("#list").innerHTML=accts.map(a=>`<div class="acc ${a.id===sel?"sel":""}" data-id="${esc(a.id)}"><div>${esc(a.label)}<small>${a.demo?"exemple":"MAJ jeton : "+fmt(a.refreshed)}</small>${a.demo?"":`<small class="ss"><span class="dot ${a.session||"disconnected"}"></span>${STL[a.session||"disconnected"]}</small>`}</div></div>`).join("");
   document.querySelectorAll(".acc").forEach(e=>e.onclick=()=>{sel=e.dataset.id;try{localStorage.setItem("sel",sel)}catch{};loadList()});
   render();
 }
@@ -66,15 +71,15 @@ async function render(){
   const a=accts.find(x=>x.id===sel),m=$("#main");
   if(!a){m.innerHTML='<p class="msg">Aucun compte. Clique sur « Connecter un compte ».</p>';return}
   m.innerHTML=`<div class="top"><h1>${esc(a.label)}</h1>
-    ${a.demo?"":'<button class="p" id="con">Connecter le personnage</button><button id="ren">Renommer</button><button id="ref">Rafraîchir le jeton</button><button class="d" id="del">Supprimer</button>'}</div>
+    ${a.demo?"":'<span class="badge" id="st"></span><button class="p" id="con">Connecter le personnage</button><button id="ren">Renommer</button><button id="ref">Rafraîchir le jeton</button><button class="d" id="del">Supprimer</button>'}</div>
     <p class="msg err" id="acterr"></p><p class="msg" id="conmsg"></p><div id="char"><p class="msg">Chargement…</p></div>`;
   if(!a.demo){
-    $("#con").onclick=()=>connectChar(a);
-    if(conRun===a.id)watchConnect(a);
+    $("#con").onclick=()=>toggleSession(a);
     $("#ren").onclick=async()=>{const l=prompt("Nouveau nom",a.label);if(l)await act(()=>api(`/api/accounts/${a.id}/rename`,"POST",{label:l}))};
     $("#ref").onclick=async e=>{e.target.disabled=true;await act(()=>api(`/api/accounts/${a.id}/refresh`,"POST",{}))};
     $("#del").onclick=async()=>{if(confirm(`Supprimer « ${a.label} » ? Les jetons enregistrés seront effacés.`))await act(()=>api(`/api/accounts/${a.id}`,"DELETE"))};
   }
+  paintStatus();
   let d;
   try{d=await api(`/api/accounts/${a.id}/character`)}
   catch(e){
@@ -103,31 +108,65 @@ async function render(){
    spells:()=>`<div class="card"><h2>Sorts</h2>${(d.spells||[]).length?`<table><tr><th>Sort</th><th>Élément</th><th class="n">Niv.</th><th class="n">PA</th><th>Portée</th><th class="n">Relance</th></tr>${d.spells.map(x=>`<tr><td><b>${esc(x.name)}</b>${x.desc?`<div class="stats">${esc(x.desc)}</div>`:""}</td><td class="msg">${esc(x.element)}</td><td class="n">${esc(x.level)}</td><td class="n">${esc(x.ap)}</td><td>${esc(x.range)}</td><td class="n">${x.cooldown?esc(x.cooldown)+" t.":"—"}</td></tr>`).join("")}</table>`:none}</div>`};
   tabs.combat=()=>'<div id="combat"><p class="msg">Chargement…</p></div>';
   tabs.map=()=>'<div id="map"></div>';
+  tabs.console=()=>consoleHtml(a);
   if(!tabs[tab])tab="fiche";
-  $("#char").innerHTML=`<div class="tabs">${[["fiche","Fiche"],["inv","Inventaire"],["jobs","Métiers"],["spells","Sorts"],["combat","Combat"],["map","Map"]].map(t=>`<button class="${t[0]===tab?"on":""}" data-t="${t[0]}">${t[1]}</button>`).join("")}</div>`+tabs[tab]();
+  $("#char").innerHTML=`<div class="tabs">${[["fiche","Fiche"],["inv","Inventaire"],["jobs","Métiers"],["spells","Sorts"],["combat","Combat"],["map","Map"],["console","Console"]].map(t=>`<button class="${t[0]===tab?"on":""}" data-t="${t[0]}">${t[1]}</button>`).join("")}</div>`+tabs[tab]();
   document.querySelectorAll(".tabs button").forEach(e=>e.onclick=()=>{tab=e.dataset.t;try{localStorage.setItem("tab",tab)}catch{};render()});
   if(tab==="combat")initCombat(a,d);
   if(tab==="map")initMap(a,d);
+  if(tab==="console")initConsole(a);
   const q=$("#invq");if(q){q.oninput=()=>{invQ=q.value;const pos=q.selectionStart;render().then(()=>{const n=$("#invq");n&&(n.focus(),n.setSelectionRange(pos,pos))})};}
 }
-let conRun=null,conTimer=null;   // account id with a game session in progress
-async function connectChar(a){
-  if(!confirm("Ouvrir une session de jeu pour ce compte ? Ferme le vrai jeu avant : une seconde session déconnecte la première."))return;
-  try{await api(`/api/accounts/${a.id}/connect`,"POST",{})}catch(e){$("#conmsg").textContent=e.message;$("#conmsg").className="msg err";return}
-  conRun=a.id;watchConnect(a);
+// ---- Game session: status, journal ("Console" tab) ----
+const SS={};   // account id -> {st: last /session view, log: [], chat: [], seq}
+const STL={connected:"Connecté",connecting:"Connexion…",error:"Erreur",disconnected:"Déconnecté"};
+const hms=t=>new Date(t*1000).toLocaleTimeString("fr-FR");
+function paintStatus(){
+  const a=accts.find(x=>x.id===sel);if(!a||a.demo)return;
+  const st=SS[a.id]?.st,v=st?.status||"disconnected";a.session=v;
+  const b=$("#st");if(b){b.className="badge "+v;
+    b.textContent=(v==="connected"?"● ":v==="connecting"?"◌ ":v==="error"?"✕ ":"○ ")+STL[v]
+      +(v==="connected"?` · ${st.character||""}${st.map?" · "+st.map:""} · depuis ${hms(st.since)}`:v==="error"?` : ${st.error}`:"")}
+  const c=$("#con");if(c){const on=v==="connected"||v==="connecting";c.textContent=on?"Déconnecter":"Connecter le personnage";c.className=on?"d":"p"}
+  const li=document.querySelector(`.acc[data-id="${a.id}"] .ss`);if(li)li.innerHTML=`<span class="dot ${v}"></span>${STL[v]}`;
 }
-function watchConnect(a){
-  const b=$("#con"),m=$("#conmsg");if(b)b.disabled=true;if(m){m.className="msg";m.textContent="Connexion au serveur de jeu et lecture du personnage…"}
-  clearInterval(conTimer);
-  conTimer=setInterval(async()=>{
-    let s;try{s=await api(`/api/accounts/${a.id}/connect`)}catch{return}
-    if(s.status==="running")return;
-    clearInterval(conTimer);conRun=null;
-    const m2=$("#conmsg"),b2=$("#con");if(b2)b2.disabled=false;
-    if(m2){m2.textContent=s.status==="done"?"Personnage récupéré.":"Échec : "+s.error;m2.className="msg"+(s.status==="error"?" err":"")}
-    if(s.status==="done")render();
-  },1000);
+async function pollSession(){
+  const a=accts.find(x=>x.id===sel);if(!a||a.demo)return;
+  const s=SS[a.id]||(SS[a.id]={st:null,log:[],chat:[],seq:0});
+  let v;try{v=await api(`/api/accounts/${a.id}/session?since=${s.seq}`)}catch{return}
+  s.st=v;s.seq=v.seq;s.log.push(...v.log);s.chat.push(...v.chat);s.log=s.log.slice(-800);s.chat=s.chat.slice(-400);
+  if(sel!==a.id)return;
+  paintStatus();if(tab==="console"&&(v.log.length||v.chat.length))appendConsole(v);
 }
+async function toggleSession(a){
+  const v=SS[a.id]?.st?.status;
+  if(v==="connected"||v==="connecting"){await api(`/api/accounts/${a.id}/disconnect`,"POST",{}).catch(()=>{})}
+  else{
+    if(!confirm("Ouvrir une session de jeu pour ce compte ? Ferme le vrai jeu avant : une seconde session déconnecte la première."))return;
+    try{await api(`/api/accounts/${a.id}/connect`,"POST",{})}catch(e){const m=$("#conmsg");if(m){m.textContent=e.message;m.className="msg err"}return}
+  }
+  pollSession();
+}
+const logLine=e=>`<div class="${esc(e.level)}"><span class="t">${hms(e.t)}</span> ${esc(e.msg)}</div>`;
+const chatLine=e=>`<div><span class="t">${hms(e.t)}</span> <b>[${esc(e.channel)}]</b> ${esc(e.author)} : ${esc(e.text)}</div>`;
+function consoleHtml(a){
+  if(a.demo)return '<div class="card"><h2>Console</h2><p class="msg">Le compte de démonstration n\'a pas de session de jeu.</p></div>';
+  return `<div class="grid"><div class="card" style="grid-column:1/-1"><h2>Journal <span class="msg">· connexion, actions envoyées, événements</span></h2><div class="cons" id="clog"></div></div>
+   <div class="card" style="grid-column:1/-1"><h2>Chat du jeu</h2><div class="cons" id="cchat" style="height:200px"></div>
+   <p class="hint">Le chat n'est pas encore décodé : aucun message de chat n'a été enregistré dans les captures. Il s'affichera ici dès que le format sera connu.</p></div></div>`;
+}
+function initConsole(a){
+  if(a.demo)return;const s=SS[a.id]||{log:[],chat:[]};
+  const l=$("#clog"),c=$("#cchat");if(l){l.innerHTML=s.log.map(logLine).join("")||'<span class="msg">Aucune activité. Clique sur « Connecter le personnage ».</span>';l.scrollTop=l.scrollHeight}
+  if(c){c.innerHTML=s.chat.map(chatLine).join("")||'<span class="msg">Aucun message.</span>'}
+}
+function appendConsole(v){
+  const near=el=>el.scrollHeight-el.scrollTop-el.clientHeight<40;
+  const l=$("#clog"),c=$("#cchat");
+  if(l&&v.log.length){const stick=near(l);if(!l.querySelector("div"))l.innerHTML="";l.insertAdjacentHTML("beforeend",v.log.map(logLine).join(""));if(stick)l.scrollTop=l.scrollHeight}
+  if(c&&v.chat.length){const stick=near(c);if(!c.querySelector("div"))c.innerHTML="";c.insertAdjacentHTML("beforeend",v.chat.map(chatLine).join(""));if(stick)c.scrollTop=c.scrollHeight}
+}
+setInterval(pollSession,1000);
 async function act(fn){
   try{await fn();await loadList()}catch(e){await loadList();const el=$("#acterr");if(el)el.textContent=e.message}
 }

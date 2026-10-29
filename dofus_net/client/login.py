@@ -38,34 +38,51 @@ def connection_step(token, device_hash, server_id=SERVER_ID):
     c.s.close()
     return ticket, host
 
-def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, enter_map=False, max_seconds=None):
-    """Handshake (+ character selection if enter). collect: list that receives every (type, body) the server pushes.
-    enter_map: after the selection burst, send the client's READY requests so the server also pushes the current map (jow).
-    Returns the connection once the server has been silent for `idle` seconds, closed it, or max_seconds elapsed."""
-    import time; t0 = time.time()
-    c = GameConn(host, PORT); c.s.settimeout(idle)
-    c.send(request(KNC, f_bytes(1, ticket) + f_bytes(2, "fr")))
+def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, enter_map=False, max_seconds=None,
+              stop=None, heartbeat=0, on_message=None, log=None):
+    """Handshake (+ character selection if enter). collect: list that receives every (type, body) the server pushes;
+    on_message(type, body) is called for each one. enter_map: after the selection burst, send the client's READY requests
+    so the server also pushes the current map (jow). heartbeat: send the client's keep-alive (kne) every N seconds.
+    log(level, text): connection/action journal. Returns the connection once `stop` is set, the server has been silent
+    for `idle` seconds (None = never), closed it, or max_seconds elapsed."""
+    import socket, time
+    log = log or (lambda level, text: None)
+    t0 = last_rx = last_hb = time.time()
+    log("info", f"Connexion au serveur de jeu {host}:{PORT}")
+    c = GameConn(host, PORT); c.s.settimeout(1.0)
+    c.send(request(KNC, f_bytes(1, ticket) + f_bytes(2, "fr"))); log("action", "→ knc (ticket)")
     char_id = None; sent_kod = False
     while True:
+        now = time.time()
+        if (stop is not None and stop.is_set()) or (max_seconds and now - t0 > max_seconds): break
+        if heartbeat and now - last_hb >= heartbeat: c.send(request("kne", f_varint(2, 1))); last_hb = now
         try: t, body = c.recv_message()
+        except socket.timeout:
+            if idle and time.time() - last_rx > idle:
+                if not quiet: print("recv: idle")
+                break
+            continue
         except Exception as e:
+            log("warn", f"Connexion fermée : {e}")
             if not quiet: print("recv:", e)
             break
+        last_rx = time.time()
         if collect is not None: collect.append((t, body))
-        if max_seconds and time.time() - t0 > max_seconds: break
+        if on_message: on_message(t, body)
         if not quiet: print(t, len(body))
         if t == IZN and enter_map and enter:
             for name, b in READY: c.send(request(name, b))
+            log("action", "→ requêtes « monde chargé » (lnt … kkc)")
         elif t == JOW and enter_map:   # ack the map load like the client (kjt + jpe)
             mid = next((v for f, v in parse(body) if f == 1 and isinstance(v, int)), None)
-            if mid: c.send(request(KJT, f_varint(1, mid))); c.send(request(JPE, f_varint(1, mid)))
-        if t == MEQ: c.send(request(KSJ))
+            if mid: c.send(request(KJT, f_varint(1, mid))); c.send(request(JPE, f_varint(1, mid))); log("action", f"→ carte {mid} chargée (kjt + jpe)")
+        if t == MEQ: c.send(request(KSJ)); log("action", "→ ksj")
         elif t == KSC:   # {2: {3: character id, ...}}
             sub = _field(body, 2)
             if sub is not None: char_id = _field_varint(sub, 3)
         elif t == JPX and not sent_kod:
-            kod, _a = make_kod(); c.send(request(KOD, f_bytes(1, kod), req_id=2)); sent_kod = True
-            if enter and char_id: c.send(request(KTA, f_varint(1, char_id)))
+            kod, _a = make_kod(); c.send(request(KOD, f_bytes(1, kod), req_id=2)); sent_kod = True; log("action", "→ kod (échange DH)")
+            if enter and char_id: c.send(request(KTA, f_varint(1, char_id))); log("action", f"→ kta (sélection du personnage {char_id})")
     return c
 
 def _field_varint(body, num):

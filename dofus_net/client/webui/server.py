@@ -27,20 +27,6 @@ def _login_worker(label):
         login_state.update(status="error", error=str(e) or type(e).__name__)
 
 
-connect_state = {}   # account id -> {status: idle | running | done | error, error}; one game session at a time
-connect_lock = threading.Lock()
-
-
-def _connect_worker(aid):
-    try:
-        gamesession.fetch_snapshot(aid)
-        connect_state[aid] = {"status": "done", "error": None}
-    except BaseException as e:                       # login helpers use SystemExit(msg) for expected failures
-        connect_state[aid] = {"status": "error", "error": str(e) or type(e).__name__}
-    finally:
-        connect_lock.release()
-
-
 SSE_HELLO, SSE_CHANGED, SSE_PING = (b"data: hello" + b"\n" * 2, b"data: changed" + b"\n" * 2, b": ping" + b"\n" * 2)
 
 
@@ -101,7 +87,7 @@ class H(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
         elif p == "/api/accounts":
-            self._json([DEMO] + accounts.list_accounts())
+            self._json([DEMO] + [dict(a, session=gamesession.status(a["id"])) for a in accounts.list_accounts()])
         elif p == "/api/login":
             self._json(login_state)
         elif p == "/api/events":
@@ -111,8 +97,11 @@ class H(BaseHTTPRequestHandler):
             data = accounts.sample_character() if aid == "demo" else accounts.load_character(aid)
             if data is None: self._json({"error": "no_snapshot"}, 404)
             else: self._json(data)
-        elif m := re.fullmatch(r"/api/accounts/(\w+)/connect", p):
-            self._json(connect_state.get(m[1], {"status": "idle", "error": None}))
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/session", p):
+            q = dict(kv.split("=", 1) for kv in self.path.partition("?")[2].split("&") if "=" in kv)
+            try: since = int(q.get("since", 0))
+            except ValueError: since = 0
+            self._json(gamesession.session(m[1]).view(since))
         elif m := re.fullmatch(r"/api/accounts/(\w+)/ai", p):
             data = accounts.load_ai(m[1])
             self._json(data) if data is not None else self._json({"error": "no_ai"}, 404)
@@ -136,12 +125,13 @@ class H(BaseHTTPRequestHandler):
                 login_state.update(status="waiting", error=None)
             threading.Thread(target=_login_worker, args=(str(body.get("label") or "").strip()[:40],), daemon=True).start()
             self._json(login_state, 202)
-        elif m := re.fullmatch(r"/api/accounts/(\w+)/connect", p):
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/(connect|disconnect)", p):
             if not accounts.get(m[1]): return self._json({"error": "not found"}, 404)
-            if not connect_lock.acquire(blocking=False): return self._json({"error": "une session de jeu est déjà en cours"}, 409)
-            connect_state[m[1]] = {"status": "running", "error": None}
-            threading.Thread(target=_connect_worker, args=(m[1],), daemon=True).start()
-            self._json(connect_state[m[1]], 202)
+            sess = gamesession.session(m[1])
+            if m[2] == "connect":
+                if not sess.start(): return self._json({"error": "session déjà active"}, 409)
+            else: sess.stop()
+            self._json(sess.view(sess.seq), 202)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/refresh", p):
             try: r = accounts.refresh(m[1])
             except SystemExit as e: return self._json({"error": str(e)}, 502)
