@@ -100,13 +100,15 @@ def exit_cells(m, side):
     return [i for i, c in enumerate(m["cells"]) if c[0] and c[2] & bit]
 
 
-def find_path(m, start, goal, blocked=()):
+def find_path(m, start, goal, blocked=(), diagonals_only=False):
     """Shortest 8-direction path start -> goal over walkable cells (uniform step cost, small penalty per turn so that paths
-    have few corners). -> list of cells including both ends, or None."""
+    have few corners). diagonals_only=True restricts the steps to the 4 odd directions (1, 3, 5, 7): the only moves allowed in a FIGHT
+    (the server answers `jpc` with code -7 to a straight horizontal / vertical step). -> list of cells including both ends, or None."""
     if not (walkable(m, start) and walkable(m, goal)): return None
     if start == goal: return [start]
     blocked = set(blocked); gx, gy = to_xy(goal)
-    def h(c): x, y = to_xy(c); return max(abs(x - gx), abs(y - gy))
+    dirs = [(i, d) for i, d in enumerate(DIRS) if not diagonals_only or i % 2]
+    def h(c): x, y = to_xy(c); return abs(x - gx) + abs(y - gy) if diagonals_only else max(abs(x - gx), abs(y - gy))
     heap = [(h(start), 0.0, start, -1)]; best = {(start, -1): 0.0}; prev = {}
     while heap:
         _f, g, cell, d = heapq.heappop(heap)
@@ -116,7 +118,7 @@ def find_path(m, start, goal, blocked=()):
             return path[::-1]
         if g > best.get((cell, d), 1e18): continue
         x, y = to_xy(cell)
-        for nd, (dx, dy) in enumerate(DIRS):
+        for nd, (dx, dy) in dirs:
             n = from_xy(x + dx, y + dy)
             if n is None or not walkable(m, n) or (n in blocked and n != goal): continue
             ng = g + 1 + (0.01 if d not in (-1, nd) else 0)

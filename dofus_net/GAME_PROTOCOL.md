@@ -67,6 +67,7 @@ Le panneau de succès fait `mdm{onglet}` -> `mdo` (liste de succès) : ce ne son
   Un groupe est un acteur à id négatif dont `3.1.5.6` contient les monstres (champ 4 = meneur, champ 3 répété = les autres ; `5` = id monstre, `4` = niveau).
 - Mon tour : `jvi`, `jti`, `jvj {2: durée, 3: acteur}` puis `jte` (vide). Actions : `jsr {1: sort, 2: case}`, `jok` (déplacement, sans `jny`), `jwo` (fin de tour).
   Le coût en PA se lit dans les tables de sorts ; l'effet dans `jtk` (variation de caractéristique) et `jsq`.
+- **Déplacement en combat : uniquement en diagonale** (directions impaires 1, 3, 5, 7, c'est-à-dire pas de ligne droite horizontale/verticale). Un pas direction 0 ou 6 est refusé par `jpc {2: compteur, 3: -7}` ; en exploration les 8 directions restent permises. `gamemaps.find_path(..., diagonals_only=True)`.
 - Acquittements : tout `jug {2: acteur}` appelle `jtd {1:1}` ; un `jsy {2: id, 4: acteur}` de MON acteur dont l'id est dans {3,7,8,10,12,13,15,16,17,23,59} appelle `jst {2: id, 3: 1}`
   (règle déduite de deux captures, 14/14 pour les ids 3 et 8, 5/5 pour 12 et 16...). Ne pas acquitter les autres.
 - Fin : `jwp` / `jwh` (résultats) puis la carte d'exploration est renvoyée (`jow`). La mort d'un ennemi n'a pas de message identifié.

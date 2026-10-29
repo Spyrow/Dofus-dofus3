@@ -7,6 +7,7 @@ Flow observed (obfuscated names, see login.py):
   acknowledgements:    jsy {2: id, 3?, 4: actor} -> jst {2: id, 3: 1} for my actor and ids in ACK_IDS (animation finished);
                        jug {2: actor} -> jtd {1: 1} (every sequence boundary, mine or the monsters')
   end:                 jwp / jwh (results), then the exploration map is sent again (jow).
+Movement in a fight is restricted to the 4 diagonal directions (a straight step is refused with jpc -7).
 The AI is deliberately simple: cast the first affordable spell that reaches the nearest enemy, else walk toward it, then end the turn.
 Line of sight, cooldowns, summons, healing and enemy death are NOT modelled: an enemy that does not react to a cast is dropped from the
 target list, and the fight ends on jwp. Only meant for easy fights (see MAX_GROUP)."""
@@ -160,7 +161,7 @@ class Fight:
             if usable and mp > 0:   # walk toward the enemy
                 rng = max(sp["max"] for sp in usable)
                 blocked = {c for a, c in s.actors.items() if a != s.char_id}
-                path = gamemaps.find_path(s.mapdata(), me, tcell, blocked)
+                path = gamemaps.find_path(s.mapdata(), me, tcell, blocked, diagonals_only=True)   # fights allow diagonal steps only
                 if not path or len(path) < 3: return
                 steps = []
                 for c in path[1:-1][:mp]:
