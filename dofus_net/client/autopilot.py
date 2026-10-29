@@ -94,11 +94,12 @@ class Autopilot:
         self.say("info", "démarré")
         try:
             while self._alive():
-                if self.s.in_fight: self.say("warn", "un combat est en cours : la gestion des combats n'est pas implémentée, arrêt"); break
+                if self.s.in_fight: self.say("warn", "un combat est en cours (hors autopilote), arrêt"); break
                 if self.s.dialog: self._dialog(); continue
                 obj, why = self._pick()
                 if obj is None: self.say("info", why); break
-                if not self._objective(*obj): break
+                o = gamedata.quest_data('objectives', obj[1]) or {}
+                if not (self._fight_objective(*obj) if o.get('type') in FIGHT_TYPES else self._objective(*obj)): break
                 time.sleep(0.5)
         except Exception as e:
             self.say("error", f"{type(e).__name__}: {e}")
@@ -119,9 +120,35 @@ class Autopilot:
                     elif self.s.map_id != int(o["map"]) and route(self.s.map_id, int(o["map"])) is None:
                         unsupported = unsupported or f"objectif « {text} » : aucune route connue (porte non apprise ?)"; continue
                     else: return (qid, oid), None
-                elif o.get("type") in FIGHT_TYPES: unsupported = unsupported or f"objectif « {text} » : il faut un combat (non géré)"
+                elif o.get("type") in FIGHT_TYPES and int(o["p"][0]) in {m for ms in self.s.groups.values() for m in ms} and self.attempts[oid] < MAX_ATTEMPTS:
+                    return (qid, oid), None
+                elif o.get("type") in FIGHT_TYPES: unsupported = unsupported or f"objectif « {text} » : aucun groupe de ce monstre sur la carte actuelle"
                 else: unsupported = unsupported or f"objectif « {text} » : type non géré"
         return None, ("aucun objectif géré — " + unsupported) if unsupported else "aucune quête en cours"
+
+    # ---- fight objective: attack a group of the current map that contains the wanted monster ----
+    def _fight_objective(self, qid, oid):
+        o = gamedata.quest_data("objectives", oid); wanted = int(o["p"][0])
+        self.goal = gamequests.objective_text(oid); self.attempts[oid] += 1
+        self.say("info", f"objectif : {self.goal} — essai {self.attempts[oid]}/{MAX_ATTEMPTS}")
+        group = self._find_group(wanted)
+        if group is None:
+            self.say("warn", f"aucun groupe contenant « {gamedata.quest_data('monsters', wanted) or wanted} » sur cette carte (la recherche de monstres sur d'autres cartes n'est pas gérée)")
+            return False
+        try: self._act(f"Attaquer le groupe {group}", lambda: self.s._do_attack(group))
+        except RuntimeError as e: self.say("warn", f"combat impossible : {e}"); return self.attempts[oid] < MAX_ATTEMPTS
+        t0 = time.time()
+        while self._alive() and time.time() - t0 < 8:
+            if not self.s.quests.get(qid, (None, {}))[1].get(oid, False): self.say("info", "objectif accompli"); return True
+            time.sleep(0.4)
+        self.say("info", "combat terminé, objectif pas encore validé (il en faut peut-être d'autres)"); return self.attempts[oid] < MAX_ATTEMPTS
+
+    def _find_group(self, monster_id):
+        for _ in range(8):
+            with self.s._lock: found = next((a for a, ms in self.s.groups.items() if monster_id in ms and len(ms) <= 3), None)
+            if found is not None or not self._alive(): return found
+            time.sleep(0.5)
+        return None
 
     # ---- one objective: travel, talk, answer ----
     def _objective(self, qid, oid):

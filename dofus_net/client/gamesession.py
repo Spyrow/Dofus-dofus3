@@ -8,13 +8,15 @@ closed (a second session on the same account kicks the first, in both directions
 Chat: the chat messages are NOT decoded yet (none in the captures so far): `Session.chat` stays empty until gamestate
 learns the message; see add_chat()."""
 import collections, threading, time
-import accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, autopilot, login
+import accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, autopilot, fightbot, login
 from wire import parse, dec_varint, enc_varint, f_bytes, f_varint, request
 from haapi import create_game_token, GAME_IDS
 
 QUEST_MSGS = {login.ICA, login.ICJ, login.ICB, login.IBG, login.ILX, login.ILF, login.KIS}
-KEEP = {login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP} | QUEST_MSGS | {gamestate.KSC, gamestate.KRG, gamestate.IRL, gamestate.IQX, gamestate.IPE, gamestate.ISM, gamestate.JOW}
+FIGHT_MSGS = {login.JUO, login.JWJ, login.JVJ, login.JTE, login.JUG, login.JSY, login.JTK, login.JSQ, login.JXI}
+KEEP = {login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP} | QUEST_MSGS | FIGHT_MSGS | {gamestate.KSC, gamestate.KRG, gamestate.IRL, gamestate.IQX, gamestate.IPE, gamestate.ISM, gamestate.JOW}
 HEARTBEAT = 5          # seconds, same cadence as the real client's kne
+CONNECT_TIMEOUT = 45   # seconds without any character data before giving up
 FLUSH = 2              # seconds between snapshot writes while connected
 
 
@@ -32,6 +34,7 @@ class Session:
         self.character = self.map = None
         # current map state (reset on every jow): map id, our cell, other actors {id: cell}, our actor id
         self.map_id = self.my_cell = self.char_id = None; self.actors = {}; self.conn = None
+        self.groups = {}; self.stats = {}; self.spell_ids = []; self.fight = fightbot.Fight(self)   # monster groups {actor: [monster ids]}
         self.elements = {}   # interactive elements of the current map (from jnj)
         self.in_fight = False; self.auto = autopilot.Autopilot(self)
         self.npcs = {}; self.quests = {}; self.dialog = None   # actor id -> template id; quest id -> (step, objectives); open dialog
@@ -64,11 +67,18 @@ class Session:
 
     # ---- map state (fed by the message loop) ----
     def _on_map_message(self, t, body):
+        if t in FIGHT_MSGS: self.fight.on_message(t, body)
+        if t == gamestate.KRG:
+            try: self.stats = gamestate.characteristics(body)
+            except (ValueError, IndexError): pass
+        elif t == gamestate.ISM:
+            sl = gamestate.shortcut_spells(body)
+            if sl: self.spell_ids = [sid for _slot, sid in sorted(sl)]
         if t == gamestate.KSC:
             self.char_id = gamestate.selection(body)[0]
         elif t == gamestate.JOW:
             mid = next((v for f, v in parse(body) if f == 1 and isinstance(v, int)), None)
-            with self._lock: self.map_id, self.my_cell, self.actors, self.npcs, self.elements = mid, None, {}, {}, {}
+            with self._lock: self.map_id, self.my_cell, self.actors, self.npcs, self.elements, self.groups = mid, None, {}, {}, {}, {}
             self._mapchanged.set()
         elif t in (login.JNJ, login.JNS):      # jnj {3: [entry]} / jns {1: entry}; entry = {1: actor id, 2: {3: cell, 4: direction}, 3: ...}
             for f, v in parse(body):
@@ -134,6 +144,9 @@ class Session:
             if aid == self.char_id: self.my_cell = cell
             tpl = gamequests.npc_template(entry) if aid < 0 else None
             if tpl: self.npcs[aid] = tpl
+            elif aid < 0 and not self.in_fight:
+                mons = fightbot.monster_group(entry)
+                if mons: self.groups[aid] = mons
 
     def mapdata(self):
         return gamemaps.load(self.map_id) if self.map_id else None
@@ -152,6 +165,9 @@ class Session:
         known = {e["element"]: e for e in gamedoors.from_map(mid)} if mid else {}
         out["elements"] = [{"element": k, "skill": v["skill"], "cell": v["cell"], "type": v["type"], "name": gamedata.get("interactives", v["interactive"]) if v["interactive"] is not None else None,
                             "to": gamedata.map_info(known[k]["to"]) if k in known else None} for k, v in list(self.elements.items())]
+        out["groups"] = [{"actor": a, "cell": actors.get(a), "monsters": [{"id": m, "name": gamedata.quest_data("monsters", m) or f"monstre {m}"} for m in ms]}
+                         for a, ms in list(self.groups.items())]
+        out["in_fight"] = self.in_fight
         out["npcs"] = [{"actor": a, "cell": actors.get(a), "tpl": tpl, "name": gamedata.quest_data("npcs", tpl) or f"PNJ {tpl}"}
                        for a, tpl in list(self.npcs.items())]
         if m:
@@ -263,6 +279,30 @@ class Session:
     def use_element(self, element):
         return self.start_action(f"Utiliser l'élément {element}", lambda: self._do_use(element))
 
+    def _do_attack(self, actor):
+        """Walk next to a monster group, attack it (hms) and play the whole fight with fightbot."""
+        with self._lock: cell = self.actors.get(actor); mons = list(self.groups.get(actor, []))
+        m = self.mapdata()
+        if cell is None or not m: raise RuntimeError("groupe introuvable sur la carte")
+        if len(mons) > fightbot.MAX_GROUP: raise RuntimeError(f"groupe trop gros ({len(mons)} monstres, max {fightbot.MAX_GROUP})")
+        x, y = gamemaps.to_xy(cell)
+        adjacent = {gamemaps.from_xy(x + dx, y + dy) for dx, dy in gamemaps.DIRS} - {None}
+        if self.my_cell not in adjacent:
+            best = None
+            for c in adjacent:
+                path, _ = self.plan(c)
+                if path and (best is None or len(path) < len(best)): best = path
+            if best is None: raise RuntimeError("aucune case accessible à côté du groupe")
+            if len(best) > 1: self._walk(best)
+        self._mapchanged.clear()
+        self._send(login.HMS, f_varint(2, actor)); self.log("action", f"→ hms : attaquer le groupe {actor} ({', '.join(gamedata.quest_data('monsters', i) or str(i) for i in mons)})")
+        if not self._mapchanged.wait(8): raise RuntimeError("le serveur n'a pas lancé le combat (pas de jow)")
+        time.sleep(2.5)   # the real client waits for the fight map before placement
+        self.fight.play()
+
+    def attack(self, actor):
+        return self.start_action(f"Attaquer le groupe {actor}", lambda: self._do_attack(actor))
+
     # ---- quests and dialogs ----
     def questview(self):
         with self._lock: quests, dialog, npcs, actors = dict(self.quests), dict(self.dialog) if self.dialog else None, dict(self.npcs), dict(self.actors)
@@ -315,6 +355,11 @@ class Session:
             self._stop = threading.Event(); self.status, self.error, self.since = "connecting", None, time.time()
         self.log("info", "Connexion en cours…")
         self._thread = threading.Thread(target=self._run, daemon=True); self._thread.start()
+        def watchdog(stop=self._stop):   # the game server can stay silent (e.g. the character is still held by a previous session)
+            time.sleep(CONNECT_TIMEOUT)
+            if self.status == "connecting" and not stop.is_set():
+                self.log("error", f"Aucune donnée de personnage après {CONNECT_TIMEOUT} s : le serveur ne répond pas"); stop.set()
+        threading.Thread(target=watchdog, daemon=True).start()
         return True
 
     def stop(self):
@@ -345,7 +390,7 @@ class Session:
                 self.recent.append((time.time(), t, body))
                 if t not in KEEP: return
                 self._on_map_message(t, body)
-                if t in (login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP) or t in QUEST_MSGS: return
+                if t in (login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP) or t in QUEST_MSGS or t in FIGHT_MSGS: return
                 if t == gamestate.KRG: state["msgs"] = [m for m in state["msgs"] if m[0] != gamestate.KRG]   # the latest wins
                 state["msgs"].append((t, body)); state["dirty"] = True
                 if t == gamestate.KSC:

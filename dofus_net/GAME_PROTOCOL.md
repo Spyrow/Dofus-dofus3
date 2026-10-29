@@ -62,11 +62,15 @@ Le panneau de succès fait `mdm{onglet}` -> `mdo` (liste de succès) : ce ne son
 - Porte utilisable : il faut se tenir sur la case où le vrai client se tenait (`stand` dans `doors.json`, relevée par `tools/learn_doors.py`).
 - Test réel : autopilote Champs -> porte 489349 -> tour du Capitaine -> dialogue en 5 réponses -> quête « Mise à l'épreuve » terminée, « Champs de bataille » commencée.
 
-## Combat (observé dans une capture, NON implémenté)
-- Entrée : `igk` (vide) puis, 1 s plus tard, serveur `jxi/jwj/jxh/jxm` (placement, liste des combattants avec leur case) ; `jxj {1:1}` = prêt -> serveur `juo` (combattants, cases) + `jti {2: id}` (début de tour).
-- Pendant le combat : `jok` (déplacement, même format qu'en exploration, avec l'id de la carte de combat), `jsr {1: id sort, 2: case}` (lancer un sort),
-  `jwo` (fin de tour probable), `jst {2: id action, 3: 1}` (acquittement d'une séquence d'animation du serveur), `jtd {1:1}` (prêt/tour suivant, à confirmer).
-- Réponses du serveur très verbeuses : `jqh`, `jsy`, `jsq`, `jtk`, `juh`, `jqk`, `jup`, `jug`… (séquences d'actions, PV/PA/PM) : à décoder.
+## Combat (`client/fightbot.py`, première version ; connexion/placement vérifiés en jeu, tours NON encore vérifiés)
+- Attaquer un groupe de la carte : marcher à côté, `hms {2: id acteur du groupe}` -> `jow` (carte de combat) + `jxi` (placement) ; client `igk`, puis `jxj {1:1}` (prêt).
+  Un groupe est un acteur à id négatif dont `3.1.5.6` contient les monstres (champ 4 = meneur, champ 3 répété = les autres ; `5` = id monstre, `4` = niveau).
+- Mon tour : `jvi`, `jti`, `jvj {2: durée, 3: acteur}` puis `jte` (vide). Actions : `jsr {1: sort, 2: case}`, `jok` (déplacement, sans `jny`), `jwo` (fin de tour).
+  Le coût en PA se lit dans les tables de sorts ; l'effet dans `jtk` (variation de caractéristique) et `jsq`.
+- Acquittements : tout `jug {2: acteur}` appelle `jtd {1:1}` ; un `jsy {2: id, 4: acteur}` de MON acteur dont l'id est dans {3,7,8,10,12,13,15,16,17,23,59} appelle `jst {2: id, 3: 1}`
+  (règle déduite de deux captures, 14/14 pour les ids 3 et 8, 5/5 pour 12 et 16...). Ne pas acquitter les autres.
+- Fin : `jwp` / `jwh` (résultats) puis la carte d'exploration est renvoyée (`jow`). La mort d'un ennemi n'a pas de message identifié.
+- Attention : couper la connexion en plein combat laisse le personnage retenu côté serveur : la reconnexion reste muette quelques minutes.
 
 ## Données statiques (`tools/export_gamedata.py`)
 Bundles Unity `Dofus_Data/StreamingAssets/Content/Data/*.asset.bundle` + textes `Content/I18n/<lang>.bin` (index u32 id/offset, chaînes varint+UTF-8).

@@ -291,11 +291,14 @@ async function refreshQuests(a){
    (d?`<div class="card"><h2>Dialogue${d.npc?` <span class="msg">· ${esc(d.npc)}</span>`:""}</h2>
       <p style="white-space:pre-wrap">${esc(d.text||"…")}</p>
       ${(d.replies||[]).map(r=>`<p style="margin:6px 0"><button data-reply="${r.id}">${esc(r.text)}</button></p>`).join("")||'<p class="msg">Pas de réponse proposée.</p>'}</div>`:"")+
-   `<div class="card"><h2>PNJ sur la carte</h2>${v.npcs.length?`<table>${v.npcs.map(n=>`<tr><td>${esc(n.name)}</td><td class="msg">case ${esc(n.cell)}</td><td class="n"><button data-talk="${n.actor}" ${off||d?"disabled":""}>Parler</button></td></tr>`).join("")}</table>`:'<p class="msg">Aucun PNJ (connecte le personnage).</p>'}</div>
+   `<div class="card"><h2>Groupes de monstres <span class="msg">· ${(v.groups||[]).length}</span></h2>${(v.groups||[]).length?`<table>${v.groups.map(g=>`<tr><td>${g.monsters.map(m=>esc(m.name)).join(", ")}</td><td class="msg">case ${esc(g.cell)}</td><td class="n"><button data-atk="${g.actor}" ${off||v.in_fight?"disabled":""}>Attaquer</button></td></tr>`).join("")}</table>`:'<p class="msg">Aucun groupe sur cette carte.</p>'}
+     <p class="hint">Combat automatique simple (sorts à portée, déplacement vers l'ennemi, fin de tour) : à utiliser sur des groupes faciles. ${v.in_fight?"<b>Combat en cours.</b>":""}</p></div>
+    <div class="card"><h2>PNJ sur la carte</h2>${v.npcs.length?`<table>${v.npcs.map(n=>`<tr><td>${esc(n.name)}</td><td class="msg">case ${esc(n.cell)}</td><td class="n"><button data-talk="${n.actor}" ${off||d?"disabled":""}>Parler</button></td></tr>`).join("")}</table>`:'<p class="msg">Aucun PNJ (connecte le personnage).</p>'}</div>
     <div class="card"><h2>Quêtes en cours <span class="msg">· ${v.quests.length}</span></h2>${v.quests.map(q=>`<div style="margin:12px 0"><b>${esc(q.name)}</b>
       ${q.desc?`<div class="stats">${esc(q.desc)}</div>`:""}
       ${q.objectives.map(o=>`<div class="row"><span>${o.active?"○":"✓"} ${esc(o.text)}</span><span class="msg">${esc(o.where||"")}</span></div>`).join("")}</div>`).join("")||'<p class="msg">Aucune quête (connecte le personnage).</p>'}</div>`;
   const ap=$("#apbtn");if(ap)ap.onclick=()=>questAct(a,"autopilot",{on:!v.auto.on});
+  box.querySelectorAll("[data-atk]").forEach(b=>b.onclick=()=>{if(confirm("Attaquer ce groupe ? Le combat est joué automatiquement."))questAct(a,"attack",{actor:+b.dataset.atk})});
   box.querySelectorAll("[data-talk]").forEach(b=>b.onclick=()=>questAct(a,"talk",{actor:+b.dataset.talk}));
   box.querySelectorAll("[data-reply]").forEach(b=>b.onclick=()=>questAct(a,"reply",{id:+b.dataset.reply}));
 }
