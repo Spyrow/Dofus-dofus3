@@ -12,6 +12,10 @@ from dh import make_kod
 import shield
 # obfuscated names, valid for the analysed build only: re-derive with tools/scan_connect.py after each update
 KNC, KOG, MEQ, KSJ, KSC, JPX, KOD, KTA = "knc", "kog", "meq", "ksj", "ksc", "jpx", "kod", "kta"
+IZN, JOW, KJT, JPE = "izn", "jow", "kjt", "jpe"   # izn = last message of the character-selection burst; jow = map to load
+# requests the real client sends once the character is selected, ending with kkc (= world loaded, server then pushes the map)
+READY = [("lnt", f_varint(1, 1)), ("kne", f_varint(2, 1)), ("kkn", b""), ("kkt", b""), ("klu", b""), ("klx", b""), ("kmj", b""),
+         ("jgm", f_varint(1, 3)), ("jgm", b""), ("jcy", b""), ("kkc", b"")]
 
 HOST, PORT = "dofus2-co-production.ankama-games.com", 5555
 CLIENT_VERSION = "3.7.12.12"
@@ -34,8 +38,9 @@ def connection_step(token, device_hash, server_id=SERVER_ID):
     c.s.close()
     return ticket, host
 
-def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False):
+def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, enter_map=False):
     """Handshake (+ character selection if enter). collect: list that receives every (type, body) the server pushes.
+    enter_map: after the selection burst, send the client's READY requests so the server also pushes the current map (jow).
     Returns the connection once the server has been silent for `idle` seconds (or closed it)."""
     c = GameConn(host, PORT); c.s.settimeout(idle)
     c.send(request(KNC, f_bytes(1, ticket) + f_bytes(2, "fr")))
@@ -47,6 +52,11 @@ def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False):
             break
         if collect is not None: collect.append((t, body))
         if not quiet: print(t, len(body))
+        if t == IZN and enter_map and enter:
+            for name, b in READY: c.send(request(name, b))
+        elif t == JOW and enter_map:   # ack the map load like the client (kjt + jpe)
+            mid = next((v for f, v in parse(body) if f == 1 and isinstance(v, int)), None)
+            if mid: c.send(request(KJT, f_varint(1, mid))); c.send(request(JPE, f_varint(1, mid)))
         if t == MEQ: c.send(request(KSJ))
         elif t == KSC:   # {2: {3: character id, ...}}
             sub = _field(body, 2)

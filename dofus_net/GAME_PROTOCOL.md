@@ -11,7 +11,9 @@ Trame : varint de longueur + protobuf ; client→serveur `{4: {1: id requête (-
 
 ## État poussé après `kta` (décodé dans `client/gamestate.py`)
 `ksc` perso (id, nom) · `krg` caractéristiques (ids = CharacteristicData) · `irl`/`iqx` inventaire (position 63 = non équipé) ·
-`ipe` métiers · `jow` carte courante. Les sorts n'ont pas été trouvés (perso niveau 1, panneau jamais ouvert dans la capture).
+`ipe` métiers · `ism` barre de raccourcis = sorts du perso (ids de la table `spells`) · `ksc` contient aussi la classe (`2.4.5.3`, table `breeds`).
+`jow` (carte courante) n'arrive que si le client envoie d'abord, après `izn` : `lnt{1:1} kne{2:1} kkn kkt klu klx kmj jgm{1:3} jgm jcy kkc` (`client/login.py` READY) ; il acquitte `jow` par `kjt{id}` + `jpe{id}`.
+Le panneau de succès fait `mdm{onglet}` -> `mdo` (liste de succès) : ce ne sont pas des sorts.
 
 ## Déplacement et changement de carte (une capture, zone Incarnam — à confirmer)
 - `jok {1: chemin, 2: id carte}` : chemin = varints packés `(direction << 12) | case`, seulement les cases de changement de direction ;

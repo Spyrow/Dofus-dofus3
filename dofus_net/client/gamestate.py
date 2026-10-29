@@ -7,6 +7,8 @@ Message names are obfuscated and rotate every build (re-derive with tools/scan_c
   IRL  inventory items {2: [{1: {3: quantity, 4: item id, 5: unique id, 7: [{5: value, 10: effect id}]}, 4: position}]};
        position 63 = not equipped (Dofus 2 value). IQX = one item added later, same entry under field 2.
   IPE  jobs {1: [{2: job id, 3: level}]}
+  ISM  spell shortcut bar {1: [{2: {1: spell id}, 3: slot}]} (empty slots have no field 2): the character's usable spells.
+       The class is in KSC ({2: {4: {5: {3: breed id}}}}); unlock levels would come from the static tables.
   JOW  current map {1: map id} (pushed on every map load; map ids resolve through gamedata.map_info). TENTATIVE: verified
        only against one capture (same id as the map of the actor list); confirm on a capture with a map change.
 Names come from gamedata.py (tools/export_gamedata.py); without it ids are shown raw. Spells were not found in the
@@ -15,7 +17,7 @@ analysed capture (level-1 character): not decoded.
 import gamedata
 from wire import parse
 
-KSC, KRG, IRL, IQX, IPE, JOW = "ksc", "krg", "irl", "iqx", "ipe", "jow"
+KSC, KRG, IRL, IQX, IPE, JOW, ISM = "ksc", "krg", "irl", "iqx", "ipe", "jow", "ism"
 KNOWN = {0: ("Vie", "Points de vie (base)"), 1: ("Points", "PA"), 23: ("Points", "PM"),   # fallback without gamedata
          26: ("Points", "Invocations"), 48: ("Vie", "Prospection")}
 NOT_EQUIPPED = 63
@@ -63,6 +65,38 @@ def selection(body):
         return cid, name
     except (StopIteration, ValueError, IndexError):
         return None, None
+
+
+def breed_of(body):
+    """KSC body -> breed id or None."""
+    try:
+        sub = next(v for f, v in parse(body) if f == 2)
+        info = next(v for f, v in parse(sub) if f == 4)
+        five = next(v for f, v in parse(info) if f == 5)
+        return next((v for f, v in parse(five) if f == 3 and isinstance(v, int)), None)
+    except (StopIteration, ValueError, IndexError):
+        return None
+
+
+def shortcut_spells(body):
+    """ISM body -> [(slot, spell id)]."""
+    out = []
+    for f, v in parse(body):
+        if f != 1 or not isinstance(v, bytes): continue
+        e = {f2: v2 for f2, v2 in parse(v)}
+        if isinstance(e.get(2), bytes):
+            sid = next((v3 for f3, v3 in parse(e[2]) if f3 == 1 and isinstance(v3, int)), None)
+            if sid: out.append((e.get(3, 0), sid))
+    return out
+
+
+def _spell_view(sid):
+    sp = gamedata.get("spells", sid)
+    levels = [gamedata.get("spell_levels", lv) for lv in (sp or {}).get("levels", [])]
+    lv = min((x for x in levels if x), key=lambda x: x["grade"], default=None)
+    return {"name": sp["name"] if sp and sp["name"] else f"Sort #{sid}", "level": lv["grade"] if lv else None,
+            "ap": lv["ap"] if lv else None, "range": f"{lv['min_range']}-{lv['range']}" if lv else "",
+            "cooldown": lv["cooldown"] if lv else None, "element": "", "desc": (sp or {}).get("desc") or ""}
 
 
 def _item(entry):
@@ -131,14 +165,17 @@ def _characteristic_groups(stats):
 def snapshot(messages, host=None):
     """messages: iterable of (type name, body). The LAST krg wins (the server re-sends it after entering the map)."""
     cid = name = stats = job_list = None
-    items = {}; map_ids = []
+    items = {}; map_ids = []; breed = None; spell_slots = None
     for t, body in messages:
         try:
-            if t == KSC: cid, name = selection(body)
+            if t == KSC: cid, name = selection(body); breed = breed_of(body)
             elif t == KRG: stats = characteristics(body)
             elif t in (IRL, IQX):
                 for it in inventory_items(body): items[it["uid"] if it["uid"] is not None else len(items)] = it
             elif t == IPE: job_list = jobs(body)
+            elif t == ISM:
+                sl = shortcut_spells(body)
+                if sl: spell_slots = sl
             elif t == JOW:
                 mid = next((v for f, v in parse(body) if f == 1 and isinstance(v, int)), None)
                 if mid and (not map_ids or map_ids[-1] != mid): map_ids.append(mid)
@@ -147,6 +184,7 @@ def snapshot(messages, host=None):
     snap = {"character": {}}
     if name: snap["character"]["name"] = name
     if cid: snap["character"]["id"] = cid
+    if breed: snap["character"]["breed"] = gamedata.get("breeds", breed) or f"Classe #{breed}"
     if host and host.startswith("dofus2-ga-"): snap["character"]["server"] = host.split("-")[2].split(".")[0].capitalize()
     if stats: snap["characteristics"] = _characteristic_groups(stats)
     if items: snap["inventory"] = {"items": [_item_view(it) for it in items.values()]}
@@ -158,6 +196,7 @@ def snapshot(messages, host=None):
         snap["maps"] = gamedata.area_maps(pos["map_id"])
         snap["trail"] = [{"x": m["x"], "y": m["y"]} for m in map(gamedata.map_info, map_ids[:-1]) if m]
     elif map_ids: snap["position"] = {"map_id": map_ids[-1]}
+    if spell_slots: snap["spells"] = [_spell_view(sid) for _slot, sid in sorted(spell_slots)]
     if job_list:
         snap["jobs"] = [{"name": gamedata.get("jobs", j) or f"Métier #{j}", "level": lvl} for j, lvl in job_list if j != BASE_JOB]
     return snap
