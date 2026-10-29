@@ -29,6 +29,12 @@ def quest_data(table, key):
     return _quest.get(table, {}).get(str(key))
 
 
+def npc_ids_named(name):
+    """Ids of the NPC templates with this exact name (a boss is often both a monster and an NPC)."""
+    quest_data("npcs", 0)
+    return [int(i) for i, n in (_quest or {}).get("npcs", {}).items() if n == name]
+
+
 def get(table, key):
     return data().get(table, {}).get(str(key))
 

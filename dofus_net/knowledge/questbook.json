@@ -114,7 +114,7 @@
  "quests": {
   "1632": {
    "name": "Le village dans les nuages",
-   "seen": 50,
+   "seen": 62,
    "steps": {
     "2252": {
      "name": "Le village dans les nuages",
@@ -130,7 +130,7 @@
   },
   "1639": {
    "name": "Transport peu commun",
-   "seen": 49,
+   "seen": 61,
    "steps": {
     "2259": {
      "name": "Transport peu commun",
@@ -187,9 +187,52 @@
     }
    }
   },
+  "1645": {
+   "name": "Décime-moi des bouftous",
+   "seen": 8,
+   "steps": {
+    "2265": {
+     "name": "Décime-moi des bouftous",
+     "objectives": {
+      "9841": "Vaincre x1 Boufton Pâlichon en un seul combat",
+      "9842": "Vaincre x1 Boufton Orageux en un seul combat",
+      "9843": "Vaincre x1 Bouftou Nuageux en un seul combat",
+      "9844": "Vaincre x1 Bouftor Éthéré en un seul combat",
+      "9845": "Retourner voir Capitaine des Kerubims"
+     }
+    }
+   }
+  },
+  "1646": {
+   "name": "Chasse aux chapardams",
+   "seen": 3,
+   "steps": {
+    "2266": {
+     "name": "Chasse aux chapardams",
+     "objectives": {
+      "9846": "Vaincre x2 Ronronchon",
+      "9847": "Vaincre x2 Tigrimas",
+      "9848": "Vaincre x2 Chakrobat",
+      "9849": "Retourner voir Capitaine des Kerubims"
+     }
+    }
+   }
+  },
+  "1647": {
+   "name": "Leçon d'humilité",
+   "seen": 3,
+   "steps": {
+    "2267": {
+     "name": "Leçon d'humilité",
+     "objectives": {
+      "9850": "Vaincre x1 Kruella Freuz en un seul combat"
+     }
+    }
+   }
+  },
   "1649": {
    "name": "Produits naturels",
-   "seen": 49,
+   "seen": 61,
    "steps": {
     "2269": {
      "name": "Produits naturels",
@@ -203,7 +246,7 @@
   },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 49,
+   "seen": 61,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",
@@ -301,6 +344,85 @@
     4110
    ],
    "qid": 1644
+  },
+  "9841": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793306541,
+   "map": 153879300,
+   "monsters": [
+    971,
+    972,
+    973
+   ],
+   "qid": 1645
+  },
+  "9842": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793306541,
+   "map": 153879300,
+   "monsters": [
+    971,
+    972,
+    973
+   ],
+   "qid": 1645
+  },
+  "9843": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793306541,
+   "map": 153879300,
+   "monsters": [
+    971,
+    972,
+    973
+   ],
+   "qid": 1645
+  },
+  "9844": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793307310,
+   "map": 153879301,
+   "monsters": [
+    972,
+    984
+   ],
+   "qid": 1645
+  },
+  "9846": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793307583,
+   "map": 153879298,
+   "monsters": [
+    4105,
+    4106
+   ],
+   "qid": 1646
+  },
+  "9847": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793307583,
+   "map": 153879298,
+   "monsters": [
+    4105,
+    4106
+   ],
+   "qid": 1646
+  },
+  "9848": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793307448,
+   "map": 153879298,
+   "monsters": [
+    982
+   ],
+   "qid": 1646
   }
  },
  "version": 1

@@ -14,6 +14,7 @@ SIDES = ("top", "bottom", "left", "right")
 TALK_TYPES = {1, 9}
 FIGHT_TYPES = {6, 7, 13, 14, 16}
 MAX_ATTEMPTS = 3
+FIGHT_REPLY = re.compile(r"combat|affront|battr|d[ée]fi|attaqu|[ée]prouve|provoqu", re.I)   # replies that start a boss fight
 FIGHT_ATTEMPTS = 8        # fights allowed per objective (an objective may need several)
 MAX_LLM_STEPS = 12         # actions suggested by the guide per run
 MAX_SEARCH_MAPS = 25      # maps visited while looking for monsters
@@ -67,7 +68,10 @@ def distances(start):
     return dist
 
 
-def pick_reply(replies):
+def pick_reply(replies, prefer=None):
+    if prefer:
+        for r in replies:
+            if prefer.search(r["text"]): return r
     for r in replies:
         if not REFUSE.search(r["text"]): return r
     return replies[0]
@@ -75,7 +79,7 @@ def pick_reply(replies):
 
 class Autopilot:
     def __init__(self, sess):
-        self.s = sess; self.on = False; self.goal = None; self.kinds = {"talk", "fight"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0
+        self.s = sess; self.on = False; self.goal = None; self.kinds = {"talk", "fight"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False
         self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter()
 
     # ---- control ----
@@ -149,7 +153,7 @@ class Autopilot:
                         unsupported = unsupported or f"objectif « {text} » : aucune route connue (porte non apprise ?)"; continue
                     else: return (qid, oid), None
                 elif o.get("type") in FIGHT_TYPES and self.attempts[oid] < FIGHT_ATTEMPTS and (
-                        int(o["p"][0]) in {m for ms in self.s.groups.values() for m in ms} or gamedata.monster_maps(int(o["p"][0]))):
+                        int(o["p"][0]) in {m for ms in self.s.groups.values() for m in ms} or gamedata.monster_maps(int(o["p"][0])) or o.get("map")):
                     return (qid, oid), None
                 elif o.get("type") in FIGHT_TYPES: unsupported = unsupported or f"objectif « {text} » : aucun groupe de ce monstre sur la carte actuelle"
                 else: unsupported = unsupported or f"objectif « {text} » : type non géré"
@@ -195,6 +199,16 @@ class Autopilot:
         return None
 
     # ---- fight objectives: attack groups containing the wanted monsters, searching nearby maps when none is here ----
+    def _objective_maps(self):
+        """Maps given by the active fight objectives themselves (a boss lives on one precise map)."""
+        out = []
+        with self.s._lock: quests = {q: dict(objs) for q, (_st, objs) in self.s.quests.items()}
+        for objs in quests.values():
+            for oid, active in objs.items():
+                o = gamedata.quest_data("objectives", oid) or {}
+                if active and o.get("type") in FIGHT_TYPES and o.get("map") and self.attempts[oid] < FIGHT_ATTEMPTS: out.append(int(o["map"]))
+        return out
+
     def _wanted_monsters(self):
         """Monster ids of every active fight objective not yet exhausted."""
         out = set()
@@ -213,13 +227,39 @@ class Autopilot:
         for a, ms in groups.items():
             score = len(set(ms) & wanted)
             if not score or len(ms) > MAX_GROUP: continue
-            key = (-score, len(ms), cell_dist(me, actors[a]) if me is not None and a in actors else 99)
+            key = (len(ms), -score, cell_dist(me, actors[a]) if me is not None and a in actors else 99)   # smallest group first: fewer enemies, fewer defeats
             if best is None or key < best[0]: best = (key, a)
         return best[1] if best else None
+
+    def _boss_fight(self, oid):
+        """Boss / quest fight started from a dialog: the monster is also an NPC standing on the objective's map. -> True if a fight was played."""
+        o = gamedata.quest_data("objectives", oid) or {}
+        mon = int(o["p"][0]); name = gamedata.quest_data("monsters", mon); npc_ids = gamedata.npc_ids_named(name) if name else []
+        if not (npc_ids and o.get("map")): return False
+        self.say("info", f"« {name} » est aussi un PNJ : combat par dialogue sur la carte {o['map']}")
+        if not self._travel(int(o["map"])): return False
+        actor = None
+        for _ in range(8):
+            with self.s._lock: actor = next((a for a, t in self.s.npcs.items() if t in npc_ids), None)
+            if actor is not None or not self._alive(): break
+            time.sleep(0.5)
+        if actor is None: self.say("warn", f"{name} introuvable sur cette carte"); return False
+        try: self._act(f"Parler au PNJ {actor}", lambda: self.s._do_talk(actor))
+        except RuntimeError as e: self.say("warn", f"dialogue impossible : {e}"); return False
+        self.want_fight = True; t_talk = time.time()
+        try: self._dialog()
+        finally: self.want_fight = False
+        if not self._alive(): return False
+        self._boss_played = False
+        def fight(): self._boss_played = self.s._do_scripted_fight(t_talk)
+        try: self._act("Combat de quête", fight)
+        except RuntimeError as e: self.say("warn", f"combat impossible : {e}"); return False
+        return self._boss_played
 
     def _fight_objective(self, qid, oid):
         """Fight the best group on this map; if there is none, visit the nearest map where a wanted monster lives (up to MAX_SEARCH_MAPS)."""
         self.attempts[oid] += 1
+        if self._boss_fight(oid): return True
         visited = set(); travel_failures = 0
         for _ in range(MAX_SEARCH_MAPS + 1):
             if not self._alive(): return False
@@ -236,7 +276,7 @@ class Autopilot:
                 time.sleep(REST_SECONDS)   # the character regains a little life before the next fight; also lets the quest updates arrive
                 return True
             cur = self.s.map_id; visited.add(cur)
-            dist = distances(cur); cands = {m for w in wanted for m in gamedata.monster_maps(w)} - visited
+            dist = distances(cur); cands = ({m for w in wanted for m in gamedata.monster_maps(w)} | set(self._objective_maps())) - visited
             reachable = sorted((dist[m], m) for m in cands if m in dist)
             if not reachable: self.say("warn", "aucune carte accessible où ces monstres apparaissent"); return False
             nxt = reachable[0][1]
@@ -310,7 +350,7 @@ class Autopilot:
                 npc = gamedata.quest_data("npcs", d.get("npc")) if d.get("npc") else None
                 g, why = guide.choose_reply(quest, npc, (self.s.dialog or {}).get("text"), replies)
                 if g: r, src = g, f"Groq : {why}"
-            r = r or pick_reply(replies)
+            r = r or pick_reply(replies, FIGHT_REPLY if self.want_fight else None)
             self.say("info", f"réponse ({src}) : « {r['text']} »")
             try: self._act(f"Répondre ({r['id']})", lambda: self.s._do_reply(r["id"]))
             except RuntimeError as e: self.say("warn", f"réponse impossible : {e}"); return

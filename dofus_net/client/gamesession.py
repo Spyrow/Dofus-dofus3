@@ -37,6 +37,7 @@ class Session:
         self.groups = {}; self.stats = {}; self.spell_ids = []; self.fight = fightbot.Fight(self)   # monster groups {actor: [monster ids]}
         self.elements = {}   # interactive elements of the current map (from jnj)
         self.in_fight = False; self.auto = autopilot.Autopilot(self)
+        self._map_changed_at = 0.0   # time of the last jow
         self._trace = None   # list of (time, 'S'|'C', message, hex) while a fight is being recorded (see _do_attack)
         self._icj_events = {}; self._dlg = None; self._done = collections.deque(maxlen=60)   # dialog being recorded; (time, quest, objective) accomplished lately
         self.npcs = {}; self.quests = {}; self.dialog = None   # actor id -> template id; quest id -> (step, objectives); open dialog
@@ -80,6 +81,7 @@ class Session:
             self.char_id = gamestate.selection(body)[0]
         elif t == gamestate.JOW:
             mid = next((v for f, v in parse(body) if f == 1 and isinstance(v, int)), None)
+            self._map_changed_at = time.time()
             with self._lock: self.map_id, self.my_cell, self.actors, self.npcs, self.elements, self.groups = mid, None, {}, {}, {}, {}
             self._mapchanged.set()
         elif t in (login.JNJ, login.JNS):      # jnj {3: [entry]} / jns {1: entry}; entry = {1: actor id, 2: {3: cell, 4: direction}, 3: ...}
@@ -407,6 +409,20 @@ class Session:
                 for e in tr: f.write(json.dumps(e) + "\n")
             self.log("info", f"Combat enregistré : {os.path.basename(path)}")
         except Exception as e: self.log("warn", f"enregistrement du combat impossible : {e}")
+
+    def _do_scripted_fight(self, since):
+        """A dialog may start a fight by itself (boss, quest fight): the server then loads the fight map right after the dialog.
+        -> True if a fight was played."""
+        end = time.time() + 6
+        while self._map_changed_at < since and time.time() < end: time.sleep(0.2)
+        if self._map_changed_at < since: return False
+        time.sleep(2.5)   # like the real client: wait for the fight map before the placement phase
+        self._trace = []
+        try: self.fight.play()
+        except RuntimeError as e:
+            self.log("warn", f"pas de combat après le dialogue : {e}"); return False
+        finally: self._dump_trace([])
+        return True
 
     def attack(self, actor):
         return self.start_action(f"Attaquer le groupe {actor}", lambda: self._do_attack(actor))
