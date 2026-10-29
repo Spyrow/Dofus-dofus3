@@ -66,9 +66,11 @@ async function render(){
   const a=accts.find(x=>x.id===sel),m=$("#main");
   if(!a){m.innerHTML='<p class="msg">Aucun compte. Clique sur « Connecter un compte ».</p>';return}
   m.innerHTML=`<div class="top"><h1>${esc(a.label)}</h1>
-    ${a.demo?"":'<button id="ren">Renommer</button><button id="ref">Rafraîchir le jeton</button><button class="d" id="del">Supprimer</button>'}</div>
-    <p class="msg err" id="acterr"></p><div id="char"><p class="msg">Chargement…</p></div>`;
+    ${a.demo?"":'<button class="p" id="con">Connecter le personnage</button><button id="ren">Renommer</button><button id="ref">Rafraîchir le jeton</button><button class="d" id="del">Supprimer</button>'}</div>
+    <p class="msg err" id="acterr"></p><p class="msg" id="conmsg"></p><div id="char"><p class="msg">Chargement…</p></div>`;
   if(!a.demo){
+    $("#con").onclick=()=>connectChar(a);
+    if(conRun===a.id)watchConnect(a);
     $("#ren").onclick=async()=>{const l=prompt("Nouveau nom",a.label);if(l)await act(()=>api(`/api/accounts/${a.id}/rename`,"POST",{label:l}))};
     $("#ref").onclick=async e=>{e.target.disabled=true;await act(()=>api(`/api/accounts/${a.id}/refresh`,"POST",{}))};
     $("#del").onclick=async()=>{if(confirm(`Supprimer « ${a.label} » ? Les jetons enregistrés seront effacés.`))await act(()=>api(`/api/accounts/${a.id}`,"DELETE"))};
@@ -77,7 +79,7 @@ async function render(){
   try{d=await api(`/api/accounts/${a.id}/character`)}
   catch(e){
     $("#char").innerHTML=e.status===404
-      ?`<div class="card"><h2>Pas encore de données de personnage</h2><p class="msg">Le compte est enregistré, mais aucun instantané de personnage n'existe pour lui : le protocole de jeu n'est décodé que jusqu'à la poignée de main (login.py). Dès qu'un décodeur écrira <code>characters/${esc(a.id)}.json</code> dans le dossier de données, il s'affichera ici. Le compte « Démo » montre le rendu.</p></div>`
+      ?`<div class="card"><h2>Pas encore de données de personnage</h2><p class="msg">Le compte est enregistré, mais le personnage n'a pas encore été récupéré. Ferme le jeu, puis clique sur « Connecter le personnage » : une session de jeu s'ouvre, le serveur envoie les caractéristiques, elles s'affichent ici. Le compte « Démo » montre le rendu complet.</p></div>`
       :`<p class="err">${esc(e.message)}</p>`;
     return;
   }
@@ -107,6 +109,24 @@ async function render(){
   if(tab==="combat")initCombat(a,d);
   if(tab==="map")initMap(a,d);
   const q=$("#invq");if(q){q.oninput=()=>{invQ=q.value;const pos=q.selectionStart;render().then(()=>{const n=$("#invq");n&&(n.focus(),n.setSelectionRange(pos,pos))})};}
+}
+let conRun=null,conTimer=null;   // account id with a game session in progress
+async function connectChar(a){
+  if(!confirm("Ouvrir une session de jeu pour ce compte ? Ferme le vrai jeu avant : une seconde session déconnecte la première."))return;
+  try{await api(`/api/accounts/${a.id}/connect`,"POST",{})}catch(e){$("#conmsg").textContent=e.message;$("#conmsg").className="msg err";return}
+  conRun=a.id;watchConnect(a);
+}
+function watchConnect(a){
+  const b=$("#con"),m=$("#conmsg");if(b)b.disabled=true;if(m){m.className="msg";m.textContent="Connexion au serveur de jeu et lecture du personnage…"}
+  clearInterval(conTimer);
+  conTimer=setInterval(async()=>{
+    let s;try{s=await api(`/api/accounts/${a.id}/connect`)}catch{return}
+    if(s.status==="running")return;
+    clearInterval(conTimer);conRun=null;
+    const m2=$("#conmsg"),b2=$("#con");if(b2)b2.disabled=false;
+    if(m2){m2.textContent=s.status==="done"?"Personnage récupéré.":"Échec : "+s.error;m2.className="msg"+(s.status==="error"?" err":"")}
+    if(s.status==="done")render();
+  },1000);
 }
 async function act(fn){
   try{await fn();await loadList()}catch(e){await loadList();const el=$("#acterr");if(el)el.textContent=e.message}

@@ -34,14 +34,19 @@ def connection_step(token, device_hash, server_id=SERVER_ID):
     c.s.close()
     return ticket, host
 
-def game_step(ticket, host, enter=False, listen=20):
-    c = GameConn(host, PORT)
+def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False):
+    """Handshake (+ character selection if enter). collect: list that receives every (type, body) the server pushes.
+    Returns the connection once the server has been silent for `idle` seconds (or closed it)."""
+    c = GameConn(host, PORT); c.s.settimeout(idle)
     c.send(request(KNC, f_bytes(1, ticket) + f_bytes(2, "fr")))
     char_id = None; sent_kod = False
-    for _ in range(listen * 10):
+    while True:
         try: t, body = c.recv_message()
-        except Exception as e: print("recv:", e); break
-        print(t, len(body))
+        except Exception as e:
+            if not quiet: print("recv:", e)
+            break
+        if collect is not None: collect.append((t, body))
+        if not quiet: print(t, len(body))
         if t == MEQ: c.send(request(KSJ))
         elif t == KSC:   # {2: {3: character id, ...}}
             sub = _field(body, 2)

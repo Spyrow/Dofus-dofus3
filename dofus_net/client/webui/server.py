@@ -10,7 +10,7 @@ import argparse, json, os, re, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-import accounts
+import accounts, gamesession
 from pkce_login import login
 
 DEMO = {"id": "demo", "label": "Démo (données fictives)", "added": None, "refreshed": None, "snapshot": None, "demo": True}
@@ -25,6 +25,20 @@ def _login_worker(label):
         login_state.update(status="done", error=None)
     except BaseException as e:                       # pkce_login uses sys.exit() on timeout
         login_state.update(status="error", error=str(e) or type(e).__name__)
+
+
+connect_state = {}   # account id -> {status: idle | running | done | error, error}; one game session at a time
+connect_lock = threading.Lock()
+
+
+def _connect_worker(aid):
+    try:
+        gamesession.fetch_snapshot(aid)
+        connect_state[aid] = {"status": "done", "error": None}
+    except BaseException as e:                       # login helpers use SystemExit(msg) for expected failures
+        connect_state[aid] = {"status": "error", "error": str(e) or type(e).__name__}
+    finally:
+        connect_lock.release()
 
 
 SSE_HELLO, SSE_CHANGED, SSE_PING = (b"data: hello" + b"\n" * 2, b"data: changed" + b"\n" * 2, b": ping" + b"\n" * 2)
@@ -97,6 +111,8 @@ class H(BaseHTTPRequestHandler):
             data = accounts.sample_character() if aid == "demo" else accounts.load_character(aid)
             if data is None: self._json({"error": "no_snapshot"}, 404)
             else: self._json(data)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/connect", p):
+            self._json(connect_state.get(m[1], {"status": "idle", "error": None}))
         elif m := re.fullmatch(r"/api/accounts/(\w+)/ai", p):
             data = accounts.load_ai(m[1])
             self._json(data) if data is not None else self._json({"error": "no_ai"}, 404)
@@ -120,6 +136,12 @@ class H(BaseHTTPRequestHandler):
                 login_state.update(status="waiting", error=None)
             threading.Thread(target=_login_worker, args=(str(body.get("label") or "").strip()[:40],), daemon=True).start()
             self._json(login_state, 202)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/connect", p):
+            if not accounts.get(m[1]): return self._json({"error": "not found"}, 404)
+            if not connect_lock.acquire(blocking=False): return self._json({"error": "une session de jeu est déjà en cours"}, 409)
+            connect_state[m[1]] = {"status": "running", "error": None}
+            threading.Thread(target=_connect_worker, args=(m[1],), daemon=True).start()
+            self._json(connect_state[m[1]], 202)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/refresh", p):
             try: r = accounts.refresh(m[1])
             except SystemExit as e: return self._json({"error": str(e)}, 502)

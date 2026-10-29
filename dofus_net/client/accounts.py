@@ -1,8 +1,8 @@
 """Multi-account store for the web UI: %APPDATA%/dofus_net/accounts.json (same folder as store.py, OUTSIDE the repo).
 
-Character snapshots (keys: character, characteristics, equipment, inventory, jobs, spells, position, maps, trail) live in %APPDATA%/dofus_net/characters/<account id>.json. Nothing in this repo fills them yet
-(the game protocol is only decoded up to the handshake, see login.py): whatever later decodes the game stream should
-write that file, schema in sample_character() below.
+Character snapshots (keys: character, characteristics, equipment, inventory, jobs, spells, position, maps, trail) live in %APPDATA%/dofus_net/characters/<account id>.json.
+gamesession.py fills character + characteristics from a live game session (gamestate.py decodes them); the other keys
+are not decoded yet. Schema in sample_character() below.
 """
 import json, os, secrets, threading, time
 import store
@@ -93,6 +93,15 @@ def load_character(aid):
     try:
         with open(char_path(aid), encoding="utf8") as f: return json.load(f)
     except (OSError, ValueError): return None
+
+
+def save_character(aid, snap):
+    """Write a snapshot (atomic replace: the web UI watches the file and live-updates)."""
+    with _lock:
+        os.makedirs(CHAR_DIR, exist_ok=True)
+        tmp = char_path(aid) + ".tmp"
+        with open(tmp, "w", encoding="utf8") as f: json.dump(snap, f, indent=1, ensure_ascii=False)
+        os.replace(tmp, char_path(aid))
 
 
 AI_DIR = os.path.join(DIR, "ai")
