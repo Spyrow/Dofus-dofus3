@@ -250,12 +250,13 @@ class Session:
     def change_map(self, side):
         return self.start_action(f"Changer de carte ({side})", lambda: self._do_change_map(side))
 
-    def _do_use(self, element):
+    def _do_use(self, element, stand=None):
         """Walk next to an interactive element, use it (itz) and learn where it leads if the map changes."""
         e = self.elements.get(element)
         if not e: raise RuntimeError("élément introuvable sur la carte")
         frm = self.map_id
         known = next((d for d in gamedoors.from_map(frm) if d["element"] == element), None)
+        if stand is not None: known = dict(known or {}, stand=stand)   # explicit cell to use it from (probing an unknown door)
         if known and known.get("stand") is not None and self.my_cell != known["stand"]:   # walk where the real client stood to use it
             path, err = self.plan(known["stand"])
             if err: raise RuntimeError(f"case d'utilisation inaccessible : {err}")
@@ -271,7 +272,7 @@ class Session:
                 if best is None: raise RuntimeError("aucune case accessible à côté de l'élément")
                 if len(best) > 1: self._walk(best)
         self._mapchanged.clear()
-        self._send(login.ITZ, f_varint(1, e["skill"]) + f_varint(3, element))
+        self._send(login.ITZ, (f_varint(1, e["skill"]) if e["skill"] else b"") + f_varint(3, element))   # protobuf omits a zero skill id
         self.log("action", f"→ itz : élément {element} (compétence {e['skill']})")
         if self._mapchanged.wait(8):
             time.sleep(1.0)
@@ -281,8 +282,8 @@ class Session:
         else:
             raise RuntimeError("aucun changement de carte après l'utilisation de l'élément (mauvaise case d'utilisation ?)")
 
-    def use_element(self, element):
-        return self.start_action(f"Utiliser l'élément {element}", lambda: self._do_use(element))
+    def use_element(self, element, stand=None):
+        return self.start_action(f"Utiliser l'élément {element}", lambda: self._do_use(element, stand))
 
     def _do_attack(self, actor):
         """Walk next to a monster group, attack it (hms) and play the whole fight with fightbot."""

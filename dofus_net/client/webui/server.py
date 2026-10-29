@@ -152,7 +152,8 @@ class H(BaseHTTPRequestHandler):
         elif m := re.fullmatch(r"/api/accounts/(\w+)/useelement", p):
             try: n = int(body.get("element"))
             except (TypeError, ValueError): return self._json({"error": "bad request"}, 400)
-            err = gamesession.session(m[1]).use_element(n)
+            stand = body.get("stand"); stand = int(stand) if isinstance(stand, (int, float)) and 0 <= stand < 560 else None
+            err = gamesession.session(m[1]).use_element(n, stand)
             self._json({"error": err} if err else {"ok": True}, 409 if err else 202)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/(talk|reply)", p):
             try: n = int(body.get("actor" if m[2] == "talk" else "id"))
