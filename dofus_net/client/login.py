@@ -13,7 +13,7 @@ import shield
 # obfuscated names, valid for the analysed build only: re-derive with tools/scan_connect.py after each update
 KNC, KOG, MEQ, KSJ, KSC, JPX, KOD, KTA = "knc", "kog", "meq", "ksj", "ksc", "jpx", "kod", "kta"
 IZN, JOW, KJT, JPE = "izn", "jow", "kjt", "jpe"
-IBV = "ibv"   # ask for the up-to-date state of a quest {3: quest id, 4: -1}; the client sends it after each icb
+IBJ, IBV = "ibj", "ibv"   # quest state request {1: quest id} (answered by icj while the quest is active) / refresh after icb {3: quest id, 4: -1}
 ITZ = "itz"   # use an interactive element {1: skill, 3: element id}
 HMS, IGK, JXJ, JSR, JWO, JTD, JST = "hms", "igk", "jxj", "jsr", "jwo", "jtd", "jst"   # attack a group / fight placement / ready / cast / end turn / turn-ready / ack
 JUO, JWJ, JVJ, JTE, JUG, JSY, JTK, JSQ = "juo", "jwj", "jvj", "jte", "jug", "jsy", "jtk", "jsq"   # fighters / fighter / turn info / turn ready / sequence end / sequence / stat change / action

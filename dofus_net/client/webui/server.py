@@ -10,7 +10,7 @@ import argparse, json, os, re, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-import accounts, gamesession, questbook
+import accounts, gamesession, groq, questbook
 from pkce_login import login
 
 DEMO = {"id": "demo", "label": "Démo (données fictives)", "added": None, "refreshed": None, "snapshot": None, "demo": True}
@@ -99,6 +99,8 @@ class H(BaseHTTPRequestHandler):
             else: self._json(data)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/quests", p):
             self._json(gamesession.session(m[1]).questview())
+        elif p == "/api/groq":
+            self._json({"configured": groq.configured(), "model": groq.model()})   # never the key
         elif p == "/api/questbook":
             self._json(questbook.summary())
         elif m := re.fullmatch(r"/api/accounts/(\w+)/recent", p):   # diagnostics: the last messages received from the game server
@@ -140,10 +142,20 @@ class H(BaseHTTPRequestHandler):
                 if not sess.start(): return self._json({"error": "session déjà active"}, 409)
             else: sess.stop()
             self._json(sess.view(sess.seq), 202)
+        elif p == "/api/groq":
+            key = str(body.get("api_key") or "").strip(); mdl = str(body.get("model") or "").strip()
+            if key and not re.fullmatch(r"[\w\-\.]{10,200}", key): return self._json({"error": "clé invalide"}, 400)
+            if key or mdl: groq.save_config(key or None, mdl or None)
+            self._json({"configured": groq.configured(), "model": groq.model()})
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/guide", p):
+            text = str(body.get("text") or "").strip()[:300]
+            if not text: return self._json({"error": "instruction vide"}, 400)
+            err = gamesession.session(m[1]).auto.run_instruction(text)
+            self._json({"error": err} if err else {"ok": True}, 409 if err else 202)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/autopilot", p):
             sess = gamesession.session(m[1])
             if body.get("on"):
-                if not sess.auto.start(body.get("kinds") if isinstance(body.get("kinds"), list) else None): return self._json({"error": "impossible : personnage non connecté ou autopilote déjà actif"}, 409)
+                if not sess.auto.start(body.get("kinds") if isinstance(body.get("kinds"), list) else None, bool(body.get("llm"))): return self._json({"error": "impossible : personnage non connecté ou autopilote déjà actif"}, 409)
             else: sess.auto.stop()
             self._json({"ok": True}, 202)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/attack", p):
@@ -157,6 +169,8 @@ class H(BaseHTTPRequestHandler):
             stand = body.get("stand"); stand = int(stand) if isinstance(stand, (int, float)) and 0 <= stand < 560 else None
             err = gamesession.session(m[1]).use_element(n, stand)
             self._json({"error": err} if err else {"ok": True}, 409 if err else 202)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/syncquests", p):
+            self._json({"finished": gamesession.session(m[1]).sync_quests()})
         elif m := re.fullmatch(r"/api/accounts/(\w+)/(talk|reply)", p):
             try: n = int(body.get("actor" if m[2] == "talk" else "id"))
             except (TypeError, ValueError): return self._json({"error": "bad request"}, 400)

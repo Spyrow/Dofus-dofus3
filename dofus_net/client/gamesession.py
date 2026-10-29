@@ -37,7 +37,7 @@ class Session:
         self.groups = {}; self.stats = {}; self.spell_ids = []; self.fight = fightbot.Fight(self)   # monster groups {actor: [monster ids]}
         self.elements = {}   # interactive elements of the current map (from jnj)
         self.in_fight = False; self.auto = autopilot.Autopilot(self)
-        self._dlg = None; self._done = collections.deque(maxlen=60)   # dialog being recorded; (time, quest, objective) accomplished lately
+        self._icj_events = {}; self._dlg = None; self._done = collections.deque(maxlen=60)   # dialog being recorded; (time, quest, objective) accomplished lately
         self.npcs = {}; self.quests = {}; self.dialog = None   # actor id -> template id; quest id -> (step, objectives); open dialog
         self._dialog_event = threading.Event(); self.recent = collections.deque(maxlen=200)   # (time, message type) of everything received
         self._act = threading.Lock(); self.busy = None; self._moved = threading.Event(); self._mapchanged = threading.Event()
@@ -98,6 +98,8 @@ class Session:
         elif t == login.ICJ:
             q = gamequests.quest_state(body)
             if q:
+                ev = self._icj_events.get(q[0])
+                if ev: ev.set()
                 with self._lock: self.quests[q[0]] = (q[1], q[2])
                 self._book_quest(q[0], q[1], q[2])
                 name = (gamedata.quest_data("quests", q[0]) or {}).get("name") or q[0]
@@ -158,6 +160,47 @@ class Session:
                 mons = fightbot.monster_group(entry)
                 if mons: self.groups[aid] = mons
 
+    def sync_quests(self, wait=3.0):
+        """Ask the server for every known quest (ibj); the ones that do not answer with icj are finished: drop them.
+        -> list of the quest ids that were dropped."""
+        with self._lock: ids = list(self.quests)
+        self._icj_events = {q: threading.Event() for q in ids}
+        for q in ids:
+            try: self._send(login.IBJ, f_varint(1, q))
+            except RuntimeError: return []
+        end = time.time() + wait
+        while time.time() < end and not all(e.is_set() for e in self._icj_events.values()): time.sleep(0.1)
+        gone = [q for q, e in self._icj_events.items() if not e.is_set()]
+        self._icj_events = {}
+        with self._lock:
+            for q in gone: self.quests.pop(q, None)
+        for q in gone: self.log("event", f"Quête terminée : « {(gamedata.quest_data('quests', q) or {}).get('name') or q} »")
+        return gone
+
+    def guide_state(self):
+        """Compact description of the situation for the LLM guide (game texts only)."""
+        import autopilot as A
+        mv = self.mapview(); info = mv.get("info") or {}
+        sides = [{"side": s, "vers": (f"{v['to']['subarea']} [{v['to']['x']}, {v['to']['y']}]" if v.get("to") else "?")}
+                 for s, v in (mv.get("sides") or {}).items() if v.get("available")]
+        objectives, targets = [], {}
+        with self._lock: quests = {q: (st, dict(objs)) for q, (st, objs) in self.quests.items()}
+        for qid, (_st, objs) in quests.items():
+            name = (gamedata.quest_data("quests", qid) or {}).get("name")
+            for oid, active in objs.items():
+                if not active: continue
+                o = gamedata.quest_data("objectives", oid) or {}; mp = gamedata.map_info(o["map"]) if o.get("map") else None
+                objectives.append({"quête": name, "objectif": gamequests.objective_text(oid), "où": f"{mp['subarea']} [{mp['x']}, {mp['y']}]" if mp else None})
+                if o.get("map") and (A.route(self.map_id, int(o["map"])) is not None or int(o["map"]) == self.map_id): targets[int(o["map"])] = objectives[-1]["où"]
+        return {"carte": f"{info.get('subarea')} [{info.get('x')}, {info.get('y')}]" if info else None, "sorties_à_pied": sides,
+                "pnj": [{"actor": n["actor"], "nom": n["name"]} for n in mv.get("npcs", [])],
+                "éléments": [{"element": e["element"], "nom": e.get("name"), "mène_à": (f"{e['to']['subarea']} [{e['to']['x']}, {e['to']['y']}]" if e.get("to") else None)} for e in mv.get("elements", [])],
+                "groupes": [{"actor": g["actor"], "monstres": [m["name"] for m in g["monsters"]]} for g in mv.get("groups", [])],
+                "objectifs_actifs": objectives[:8], "cartes_atteignables_des_objectifs": [{"map_id": k, "où": v} for k, v in targets.items()],
+                # validation helpers (not sent to the model)
+                "npcs": [{"actor": n["actor"]} for n in mv.get("npcs", [])], "groups": [{"actor": g["actor"]} for g in mv.get("groups", []) if len(g["monsters"]) <= 3],
+                "elements": [{"element": e["element"]} for e in mv.get("elements", [])], "sides": sides, "reachable_maps": list(targets)}
+
     def _active_objectives(self):
         with self._lock: return [o for _q, (_st, objs) in self.quests.items() for o, active in objs.items() if active]
 
@@ -200,7 +243,7 @@ class Session:
             out["mov"] = "".join(str(c[0]) for c in m["cells"])
             near = gamedata.neighbours(mid)
             out["sides"] = {side: {"available": bool(m["neighbours"].get(side)) and bool(gamemaps.exit_cells(m, side)),
-                                   "cells": gamemaps.exit_cells(m, side), "to": gamedata.map_info(near.get(side)) if near.get(side) else None}
+                                   "cells": gamemaps.exit_cells(m, side), "to": (gamedata.map_info(near.get(side) or m["neighbours"].get(side)) if (near.get(side) or m["neighbours"].get(side)) else None)}
                             for side in gamemaps.EXIT_BIT}
         return out
 

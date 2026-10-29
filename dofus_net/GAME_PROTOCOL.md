@@ -78,5 +78,12 @@ Le panneau de succès fait `mdm{onglet}` -> `mdo` (liste de succès) : ce ne son
   (chemin de réponses, objectifs validés dans les 6 s, impasses). L'autopilote suit un chemin qui a déjà validé un objectif actif, sinon évite les impasses connues.
 - `doors.json` (`client/gamedoors.py`) : éléments interactifs et cases-déclencheurs appris. Alimentés en direct par les sessions et par `tools/learn_quests.py` / `tools/learn_doors.py` sur des captures.
 
+## Guide IA (Groq) (`client/groq.py`, `client/guide.py`)
+- Clé : variable `GROQ_API_KEY` ou `%APPDATA%/dofus_net/groq.json` (hors dépôt ; l'UI peut l'enregistrer, jamais relue). Modèle par défaut `llama-3.3-70b-versatile` (`GROQ_MODEL` / `groq.json`).
+- Rôles : (1) réponses de dialogue inconnues du livre de quêtes, (2) action suivante quand l'autopilote ne trouve aucun objectif gérable, (3) instruction libre du joueur traduite en actions.
+- Le modèle propose, le bot valide : actions autorisées `talk, change_map, use_element, go_map, attack, stop`, paramètres vérifiés contre l'état réel (PNJ, éléments, sorties, groupes ≤ 3, cartes avec route) ; tout le reste est ignoré. Erreur/429 -> repli sur le livre puis l'heuristique.
+- Envoyé à Groq : textes de quêtes/dialogues, noms de cartes/PNJ/éléments. Jamais de jeton, e-mail, nom de compte ou de personnage.
+- Fin de quête : le serveur n'envoie rien ; `ibj {quête}` est répondu par `icj` tant que la quête est active, une quête muette est terminée (`Session.sync_quests`).
+
 ## Données statiques (`tools/export_gamedata.py`)
 Bundles Unity `Dofus_Data/StreamingAssets/Content/Data/*.asset.bundle` + textes `Content/I18n/<lang>.bin` (index u32 id/offset, chaînes varint+UTF-8).

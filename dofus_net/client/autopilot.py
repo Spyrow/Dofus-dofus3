@@ -7,7 +7,7 @@ It also stops when a fight starts, when the character disconnects, after MAX_ATT
 
 Travel uses %APPDATA%/dofus_net/mapgraph.json (tools/index_maps.py): {map id: [top, bottom, left, right] neighbour ids}."""
 import collections, json, os, re, threading, time
-import gamedata, gamedoors, gamequests, questbook, store
+import gamedata, gamedoors, gamequests, guide, questbook, store
 
 GRAPH_PATH = os.path.join(os.path.dirname(store.PATH), "mapgraph.json")
 SIDES = ("top", "bottom", "left", "right")
@@ -15,6 +15,7 @@ TALK_TYPES = {1, 9}
 FIGHT_TYPES = {6, 7, 13, 14, 16}
 MAX_ATTEMPTS = 3
 FIGHT_ATTEMPTS = 8        # fights allowed per objective (an objective may need several)
+MAX_LLM_STEPS = 12         # actions suggested by the guide per run
 MAX_SEARCH_MAPS = 25      # maps visited while looking for monsters
 REST_SECONDS = 8          # pause between two fights
 MAX_TRAVEL_STEPS = 80
@@ -74,14 +75,15 @@ def pick_reply(replies):
 
 class Autopilot:
     def __init__(self, sess):
-        self.s = sess; self.on = False; self.goal = None; self.kinds = {"talk", "fight"}
+        self.s = sess; self.on = False; self.goal = None; self.kinds = {"talk", "fight"}; self.llm = False; self.llm_steps = 0
         self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter()
 
     # ---- control ----
-    def start(self, kinds=None):
-        """kinds: subset of {"talk", "fight"} to handle (default both)."""
+    def start(self, kinds=None, llm=False):
+        """kinds: subset of {"talk", "fight"} to handle (default both). llm: ask the Groq guide for dialog replies the book does not know,
+        and for the next action when no objective can be handled."""
         if self.on: return False
-        self.kinds = set(kinds or ("talk", "fight"))
+        self.kinds = set(kinds or ("talk", "fight")); self.llm = bool(llm) and guide.available(); self.llm_steps = 0
         if self.s.status != "connected": return False
         self.on = True; self.goal = None; self._stop = threading.Event(); self.attempts.clear()
         self._thread = threading.Thread(target=self._run, daemon=True); self._thread.start()
@@ -114,7 +116,9 @@ class Autopilot:
                 if self.s.in_fight: self.say("warn", "un combat est en cours (hors autopilote), arrêt"); break
                 if self.s.dialog: self._dialog(); continue
                 obj, why = self._pick()
-                if obj is None: self.say("info", why); break
+                if obj is None:
+                    if self.llm and self.llm_steps < MAX_LLM_STEPS and self._ask_guide(why): continue
+                    self.say("info", why); break
                 o = gamedata.quest_data('objectives', obj[1]) or {}
                 if not (self._fight_objective(*obj) if o.get('type') in FIGHT_TYPES else self._objective(*obj)): break
                 time.sleep(0.5)
@@ -145,6 +149,45 @@ class Autopilot:
                 elif o.get("type") in FIGHT_TYPES: unsupported = unsupported or f"objectif « {text} » : aucun groupe de ce monstre sur la carte actuelle"
                 else: unsupported = unsupported or f"objectif « {text} » : type non géré"
         return None, ("aucun objectif géré — " + unsupported) if unsupported else "aucune quête en cours"
+
+    # ---- LLM guide ----
+    def _ask_guide(self, reason, instruction=None):
+        """Ask Groq for the next actions and run the validated ones. -> True if something was executed."""
+        state = self.s.guide_state()
+        actions, why = guide.plan(state, instruction)
+        self.say("info", f"guide Groq : {why or 'aucune suggestion'}" + (f" — {len(actions)} action(s)" if actions else ""))
+        return self._run_actions(actions)
+
+    def _run_actions(self, actions):
+        did = False
+        for a in actions:
+            if not self._alive() or self.llm_steps >= MAX_LLM_STEPS: break
+            if a["action"] == "stop": break
+            self.llm_steps += 1; did = True; self.say("action", f"guide → {a}")
+            try:
+                if a["action"] == "talk":
+                    self._act(f"Parler au PNJ {a['npc']}", lambda: self.s._do_talk(a["npc"])); self._dialog()
+                elif a["action"] == "change_map": self._act(f"Changer de carte ({a['side']})", lambda: self.s._do_change_map(a["side"]))
+                elif a["action"] == "use_element": self._act(f"Utiliser l'élément {a['element']}", lambda: self.s._do_use(a["element"]))
+                elif a["action"] == "go_map": self._travel(a["map_id"])
+                elif a["action"] == "attack": self._act(f"Attaquer le groupe {a['group']}", lambda: self.s._do_attack(a["group"]))
+            except RuntimeError as e:
+                self.say("warn", f"action du guide impossible : {e}"); break
+        return did
+
+    def run_instruction(self, text):
+        """A free instruction from the player ('va voir le capitaine') translated into bot actions by the guide, then executed."""
+        if self.on or self.s.status != "connected": return "autopilote actif ou personnage non connecté"
+        if not guide.available(): return "clé Groq non configurée"
+        self.on = True; self.llm_steps = 0; self._stop = threading.Event()
+        def run():
+            try:
+                self.say("info", f"instruction : « {text} »")
+                if not self._ask_guide("instruction", text): self.say("warn", "le guide n'a proposé aucune action utilisable")
+            except Exception as e: self.say("error", f"{type(e).__name__}: {e}")
+            finally: self.on = False; self.goal = None
+        threading.Thread(target=run, daemon=True).start()
+        return None
 
     # ---- fight objectives: attack groups containing the wanted monsters, searching nearby maps when none is here ----
     def _wanted_monsters(self):
@@ -212,6 +255,9 @@ class Autopilot:
         try: self._act(f"Parler au PNJ {actor}", lambda: self.s._do_talk(actor))
         except RuntimeError as e: self.say("warn", f"dialogue impossible : {e}"); return self.attempts[oid] < MAX_ATTEMPTS
         self._dialog()
+        time.sleep(1.5)
+        try: self.s.sync_quests()   # a finished quest sends no message of its own: ask for each quest, drop the silent ones
+        except Exception: pass
         t0 = time.time()   # the server confirms with ibg/icj shortly after the dialog ends
         while self._alive() and time.time() - t0 < 4:
             if not self.s.quests.get(qid, (None, {}))[1].get(oid, False): self.say("info", "objectif accompli"); return True
@@ -254,6 +300,11 @@ class Autopilot:
             d = self.s._dlg or {}
             r = questbook.suggest_reply(d.get("npc"), d.get("map"), d.get("path", []), replies, self.s._active_objectives(), REFUSE)
             src = "livre de quêtes" if r else "heuristique"
+            if r is None and self.llm:
+                quest = "; ".join(f"{o['quête']} : {o['objectif']}" for o in self.s.guide_state()["objectifs_actifs"][:4])
+                npc = gamedata.quest_data("npcs", d.get("npc")) if d.get("npc") else None
+                g, why = guide.choose_reply(quest, npc, (self.s.dialog or {}).get("text"), replies)
+                if g: r, src = g, f"Groq : {why}"
             r = r or pick_reply(replies)
             self.say("info", f"réponse ({src}) : « {r['text']} »")
             try: self._act(f"Répondre ({r['id']})", lambda: self.s._do_reply(r["id"]))
