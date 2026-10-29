@@ -11,3 +11,21 @@ def create_game_token(api_key, game_id=GAME_IDS["dofus"]):
     req = urllib.request.Request(url, headers={"APIKEY": api_key, "User-Agent": "Zaap pkce_login"})
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.load(r)["token"]
+
+
+ZAAP_GAME_ID = 102
+SHOP_KEY, PAYMENT_MODE = "ZAAP", "OK"          # SHOP_HAAPI_KEYS in the launcher
+
+
+def create_api_key(login, password, lang="fr", certificate_id=None, certificate_hash=None):
+    """POST Api/CreateApiKey (the launcher's login/password path) -> {key, account_id, refresh_token, data}.
+    `key` is what goes in the APIKEY header. Accounts needing Shield/certificate answer with
+    data.security_state (e.g. UNSECURED) or an HTTP error: certificate_* is not handled here."""
+    body = {"login": login, "password": password, "game_id": ZAAP_GAME_ID, "long_life_token": True,
+            "shop_key": SHOP_KEY, "payment_mode": PAYMENT_MODE, "lang": lang}
+    if certificate_id and certificate_hash:
+        body.update(certificate_id=certificate_id, certificate_hash=certificate_hash)
+    req = urllib.request.Request(HAAPI_URL + "json/Ankama/v5/Api/CreateApiKey", json.dumps(body).encode(),
+                                 {"Content-Type": "application/json", "User-Agent": "Zaap pkce_login"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.load(r)
