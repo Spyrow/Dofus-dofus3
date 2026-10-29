@@ -107,6 +107,8 @@ class Session:
             except RuntimeError: pass
         elif t == login.IBG:
             oid, qid = _vi(body, 1), _vi(body, 2)
+            with self._lock:
+                if qid in self.quests and oid in self.quests[qid][1]: self.quests[qid][1][oid] = False   # done (the next icj confirms)
             self.log("event", f"Objectif accompli : {gamequests.objective_text(oid)}")
         elif t == login.ILX:
             with self._lock: self.dialog = {"actor": _vi(body, 5), "text": None, "replies": []}

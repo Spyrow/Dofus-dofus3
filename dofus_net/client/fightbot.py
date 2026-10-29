@@ -107,6 +107,7 @@ class Fight:
             if self.over.is_set(): break
             try: self._turn()
             except RuntimeError as e: say(f"tour interrompu : {e}")
+            if self.over.is_set(): break   # the last cast ended the fight: no turn to end
             s._send(login.JWO); say("fin de tour (jwo)")
         if not self.over.wait(15): raise RuntimeError("fin du combat non reçue")
         say("terminé"); time.sleep(3)
