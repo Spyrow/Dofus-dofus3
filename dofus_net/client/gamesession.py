@@ -279,7 +279,7 @@ class Session:
             info = gamedata.map_info(self.map_id)
             self.log("event", f"Passage {'appris' if new else 'connu'} : {frm} → {self.map_id}" + (f" ({info['subarea']} [{info['x']}, {info['y']}])" if info else ""))
         else:
-            self.log("warn", "aucun changement de carte après l'utilisation de l'élément")
+            raise RuntimeError("aucun changement de carte après l'utilisation de l'élément (mauvaise case d'utilisation ?)")
 
     def use_element(self, element):
         return self.start_action(f"Utiliser l'élément {element}", lambda: self._do_use(element))

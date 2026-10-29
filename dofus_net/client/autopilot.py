@@ -226,14 +226,18 @@ class Autopilot:
         return None
 
     def _travel(self, goal):
+        """Walk/use doors until map `goal` is reached. A step must change the map: if it does not, give up instead of looping."""
+        prev = None
         for _ in range(MAX_TRAVEL_STEPS):
             cur = self.s.map_id
             if not self._alive(): return False
             if cur == goal: return True
+            if cur == prev: self.say("error", "le voyage n'avance plus (la carte n'a pas changé après l'étape), abandon"); return False
             r = route(cur, goal)
             if r is None: self.say("error", f"aucune route de la carte {cur} à la carte {goal} (porte non apprise, zaap ou carte inconnue ?)"); return False
             kind, arg = r[0]
             self.say("info", f"voyage vers {goal} : {len(r)} étape(s), prochaine : " + (arg if kind == "side" else f"porte (élément {arg['element']})"))
+            prev = cur
             try:
                 if kind == "side": self._act(f"Changer de carte ({arg})", lambda: self.s._do_change_map(arg))
                 else: self._act(f"Utiliser l'élément {arg['element']}", lambda: self.s._do_use(arg["element"]))

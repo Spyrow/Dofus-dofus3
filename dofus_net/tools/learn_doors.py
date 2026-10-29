@@ -41,7 +41,7 @@ def messages(pcap):
 
 
 def last_cell(jok_body):
-    """Last cell of a client `jok` path (packed varints: direction << 12 | cell)."""
+    """Last cell of a client `jok` path (packed varints: direction << 12 | cell). The path belongs to the map id in its field 2."""
     raw = next((v for f, v in parse(jok_body) if f == 1 and isinstance(v, bytes)), b"")
     i, last = 0, None
     while i < len(raw): v, i = dec_varint(raw, i); last = v & 0xFFF
@@ -55,7 +55,7 @@ def passages(msgs):
         elif k == "S" and n == "jnj": els.update(gamedoors.elements(b))
         elif k == "C" and n == "itz":
             skill, elem = vi(b, 1), vi(b, 3)
-            stand = next((last_cell(b2) for t2, k2, n2, b2 in reversed(msgs[:i]) if k2 == "C" and n2 == "jok" and t - t2 < 8), None)
+            stand = next((last_cell(b2) for t2, k2, n2, b2 in reversed(msgs[:i]) if k2 == "C" and n2 == "jok" and t - t2 < 8 and vi(b2, 2) == cur), None)   # same map only
             to = next((vi(b2, 1) for t2, k2, n2, b2 in msgs[i + 1:i + 80] if k2 == "S" and n2 == "jow" and t2 - t < 5), None)
             if cur and to and to != cur: found.append((cur, skill, elem, (els.get(elem) or {}).get('cell'), to, stand))
     return found
