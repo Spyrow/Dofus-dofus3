@@ -51,9 +51,10 @@ Le panneau de succès fait `mdm{onglet}` -> `mdo` (liste de succès) : ce ne son
   mais la carte de destination est décidée par le serveur (non présente dans les données) : les zones du tutoriel, Incarnam et Astrub ne sont donc pas reliées dans le graphe.
 
 ## Portes / éléments interactifs (`client/gamedoors.py`, `tools/learn_doors.py`)
-- `jnj` liste les éléments interactifs de la carte (champ 7) : `{4: case (ou -1), 5: {1: id compétence, 3: type}, 6: id élément}`.
+- `jnj` liste les éléments interactifs de la carte (champ 7) : `{4: id du modèle d'élément (table `interactives`, ex. 475 = « Portes du Temple Céleste », -1 = inconnu), 5: {1: id compétence, 3: type (184 pour les portes vues)}, 6: id élément}`. La case de l'élément n'y est PAS (5.2 n'est pas une case).
   Utiliser un élément : `itz {1: id compétence, 3: id élément}` -> `jow` (nouvelle carte). La destination est décidée par le serveur : on l'apprend en observant un passage
   (`learn_doors.py` sur une capture, ou en utilisant l'élément depuis l'onglet Map). Base : `%APPDATA%/dofus_net/doors.json`, utilisée par le BFS de l'autopilote.
+- Le vrai client marche d'abord jusqu'à côté de la porte (`jok`, `jny`) puis envoie `itz`. Envoyer `itz` sans être à côté (cas testé sur « Champs ») est ignoré en silence. La case de la porte n'est ni dans `jnj` ni déductible de la position des bundles (calage pixels -> cases impossible : l'axe vertical n'est pas une coordonnée de sol).
 
 ## Combat (observé dans une capture, NON implémenté)
 - Entrée : `igk` (vide) puis, 1 s plus tard, serveur `jxi/jwj/jxh/jxm` (placement, liste des combattants avec leur case) ; `jxj {1:1}` = prêt -> serveur `juo` (combattants, cases) + `jti {2: id}` (début de tour).

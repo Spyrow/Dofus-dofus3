@@ -245,7 +245,7 @@ async function refreshCurMap(){
   }
   const cel=$("#cmel");
   if(cel){const els=v.elements||[];cel.style.display=els.length?"":"none";
-    cel.innerHTML=els.length?`<h2>Éléments interactifs <span class="msg">· portes, escaliers, ressources… Une porte utilisée est apprise pour l'autopilote.</span></h2><table>${els.map(e=>`<tr><td>élément ${esc(e.element)} <span class="msg">type ${esc(e.type)}</span></td><td class="msg">${e.cell==null?"case inconnue":"case "+esc(e.cell)}</td><td class="msg">${e.to?"→ "+esc(e.to.subarea||"")+" ["+esc(e.to.x)+", "+esc(e.to.y)+"]":""}</td><td class="n"><button data-el="${e.element}" ${v.live&&!v.busy?"":"disabled"}>Utiliser</button></td></tr>`).join("")}</table>`:"";
+    cel.innerHTML=els.length?`<h2>Éléments interactifs <span class="msg">· portes, escaliers, ressources… Une porte utilisée est apprise pour l'autopilote.</span></h2><table>${els.map(e=>`<tr><td>${esc(e.name||"élément")} <span class="msg">#${esc(e.element)}</span></td><td class="msg"></td><td class="msg">${e.to?"→ "+esc(e.to.subarea||"")+" ["+esc(e.to.x)+", "+esc(e.to.y)+"]":""}</td><td class="n"><button data-el="${e.element}" ${v.live&&!v.busy?"":"disabled"}>Utiliser</button></td></tr>`).join("")}</table>`:"";
     cel.querySelectorAll("[data-el]").forEach(b=>b.onclick=async()=>{if(!confirm("Utiliser cet élément ? Cela peut vous déplacer sur une autre carte."))return;
       try{await api(`/api/accounts/${sel}/useelement`,"POST",{element:+b.dataset.el});setInfo("Utilisation de l'élément…")}catch(err){setInfo("Impossible : "+err.message,true)}refreshCurMap()})}
   setInfo(!v.mov?"Données de la carte indisponibles (lance tools/index_maps.py)."

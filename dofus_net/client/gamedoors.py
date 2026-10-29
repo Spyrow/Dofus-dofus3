@@ -3,7 +3,7 @@
 The server decides where an element leads, so destinations are only known once a passage has been observed (capture of a real
 session: tools/learn_doors.py, or one made through the UI). Stored in %APPDATA%/dofus_net/doors.json:
 {from map id: [{"skill": itz.1, "element": itz.3, "cell": element cell or null, "to": map id reached}]}.
-The element list of a map comes from the jnj message (field 7: {4: cell, 5: {1: skill, 3: type}, 6: element id}); using one is
+The element list of a map comes from the jnj message (field 7: {4: element model id, 5: {1: skill, 3: type}, 6: element id}); using one is
 `itz {1: skill, 3: element}` -> jow."""
 import json, os, threading
 import store
@@ -39,13 +39,14 @@ def record(frm, skill, element, cell, to):
 
 
 def elements(jnj_body):
-    """jnj body -> {element id: {"skill": itz.1, "cell": cell or None, "type": skill type}}"""
+    """jnj body -> {element id: {"skill": itz.1, "interactive": element model id (table `interactives`) or None, "type": skill type,
+    "cell": None}}. The element's cell is NOT in this message (field 5.2 is not a cell)."""
     out = {}
     for f, v in parse(jnj_body):
         if f != 7 or not isinstance(v, bytes): continue
         e = dict(parse(v)); five = dict(parse(e[5])) if isinstance(e.get(5), bytes) else {}
-        cell = e.get(4) if isinstance(e.get(4), int) and e.get(4) < 560 else None
-        if isinstance(e.get(6), int): out[e[6]] = {"skill": five.get(1), "cell": cell, "type": five.get(3)}
+        model = e.get(4) if isinstance(e.get(4), int) and e.get(4) < 1 << 40 else None
+        if isinstance(e.get(6), int): out[e[6]] = {"skill": five.get(1), "interactive": model, "type": five.get(3), "cell": None}
     return out
 
 

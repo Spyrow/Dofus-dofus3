@@ -56,6 +56,7 @@ def main():
                                "cooldown": v["minCastInterval"], "max_per_turn": v["maxCastPerTurn"]} for k, v in table(dd, "spelllevels").items()}
     out["item_types"] = {k: t(v["nameId"]) for k, v in table(dd, "itemtypes").items()}
     out["items"] = {k: {"name": t(v["nameId"]), "type": v["typeId"], "level": v["level"]} for k, v in table(dd, "items").items()}
+    out["interactives"] = {k: t(v["nameId"]) for k, v in table(dd, "interactives").items()}
     out["jobs"] = {k: t(v["nameId"]) for k, v in table(dd, "jobs").items()}
     out["breeds"] = {k: t(v["shortNameId"]) for k, v in table(dd, "breeds").items()}
     out["effects"] = {k: t(v["descriptionId"]) for k, v in table(dd, "effects").items()}

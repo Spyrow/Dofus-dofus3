@@ -144,7 +144,7 @@ class Session:
         out = {"live": live, "map_id": mid, "info": info, "me": me, "busy": busy,
                "actors": {str(k): v for k, v in actors.items() if k != self.char_id}}
         known = {e["element"]: e for e in gamedoors.from_map(mid)} if mid else {}
-        out["elements"] = [{"element": k, "skill": v["skill"], "cell": v["cell"], "type": v["type"],
+        out["elements"] = [{"element": k, "skill": v["skill"], "cell": v["cell"], "type": v["type"], "name": gamedata.get("interactives", v["interactive"]) if v["interactive"] is not None else None,
                             "to": gamedata.map_info(known[k]["to"]) if k in known else None} for k, v in list(self.elements.items())]
         out["npcs"] = [{"actor": a, "cell": actors.get(a), "tpl": tpl, "name": gamedata.quest_data("npcs", tpl) or f"PNJ {tpl}"}
                        for a, tpl in list(self.npcs.items())]
@@ -228,7 +228,7 @@ class Session:
         e = self.elements.get(element)
         if not e: raise RuntimeError("élément introuvable sur la carte")
         frm = self.map_id
-        if e["cell"] is not None and self.my_cell != e["cell"]:
+        if e["cell"] is not None and self.my_cell != e["cell"]:   # the cell is unknown for now: the server is asked directly
             x, y = gamemaps.to_xy(e["cell"])
             adjacent = {gamemaps.from_xy(x + dx, y + dy) for dx, dy in gamemaps.DIRS} - {None}
             if self.my_cell not in adjacent:
