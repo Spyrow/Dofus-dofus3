@@ -114,7 +114,7 @@
  "quests": {
   "1632": {
    "name": "Le village dans les nuages",
-   "seen": 62,
+   "seen": 66,
    "steps": {
     "2252": {
      "name": "Le village dans les nuages",
@@ -130,7 +130,7 @@
   },
   "1639": {
    "name": "Transport peu commun",
-   "seen": 61,
+   "seen": 65,
    "steps": {
     "2259": {
      "name": "Transport peu commun",
@@ -220,19 +220,36 @@
   },
   "1647": {
    "name": "Leçon d'humilité",
-   "seen": 3,
+   "seen": 6,
    "steps": {
     "2267": {
      "name": "Leçon d'humilité",
      "objectives": {
-      "9850": "Vaincre x1 Kruella Freuz en un seul combat"
+      "9850": "Vaincre x1 Kruella Freuz en un seul combat",
+      "9851": "Retourner voir Capitaine des Kerubims"
+     }
+    }
+   }
+  },
+  "1648": {
+   "name": "Des chafers qui marchent",
+   "seen": 2,
+   "steps": {
+    "2268": {
+     "name": "Des chafers qui marchent",
+     "objectives": {
+      "9852": "Vaincre x1 Chafer Débutant en un seul combat",
+      "9853": "Vaincre x1 Chafer Furtif en un seul combat",
+      "9854": "Vaincre x1 Chafer Éclaireur en un seul combat",
+      "9855": "Vaincre x1 Chafer Piquier en un seul combat",
+      "9856": "Découvrir la carte : Tombeau de Percy Klop"
      }
     }
    }
   },
   "1649": {
    "name": "Produits naturels",
-   "seen": 61,
+   "seen": 65,
    "steps": {
     "2269": {
      "name": "Produits naturels",
@@ -246,7 +263,7 @@
   },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 61,
+   "seen": 65,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",

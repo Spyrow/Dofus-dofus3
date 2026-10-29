@@ -7,7 +7,7 @@ It also stops when a fight starts, when the character disconnects, after MAX_ATT
 
 Travel uses %APPDATA%/dofus_net/mapgraph.json (tools/index_maps.py): {map id: [top, bottom, left, right] neighbour ids}."""
 import collections, json, os, re, threading, time
-import gamedata, gamedoors, gamequests, guide, questbook, store
+import gamedata, gamedoors, gamequests, guide, knowledge, questbook, store
 
 GRAPH_PATH = os.path.join(os.path.dirname(store.PATH), "mapgraph.json")
 SIDES = ("top", "bottom", "left", "right")
@@ -26,6 +26,19 @@ REFUSE = re.compile(r"renonc|refus|partir|quitter|s'en aller|laisser|abandon|fui
 _graph = None
 
 
+BLOCKED_FILE = "blocked_edges.json"   # {map id: [sides]}: borders declared in the map data that have no exit cell (learned, shared)
+
+
+def blocked_edges():
+    return knowledge.load(BLOCKED_FILE, {})
+
+
+def block_edge(map_id, side):
+    with knowledge._lock:
+        b = blocked_edges(); lst = b.setdefault(str(map_id), [])
+        if side not in lst: lst.append(side); knowledge.save(BLOCKED_FILE, b)
+
+
 def graph():
     global _graph
     if _graph is None:
@@ -38,12 +51,12 @@ def graph():
 def route(start, goal):
     """Shortest list of steps from map `start` to map `goal`, or None. A step is ('side', 'right'|'left'|'top'|'bottom') or
     ('door', {skill, element, cell, to}) from the learned passages (gamedoors)."""
-    g = graph(); doors = gamedoors.load(); start, goal = int(start), int(goal)
+    g = graph(); doors = gamedoors.load(); dead = blocked_edges(); start, goal = int(start), int(goal)
     if start == goal: return []
     prev = {start: None}; queue = collections.deque([start])
     while queue:
         cur = queue.popleft()
-        edges = [(nxt, ("side", side)) for side, nxt in zip(SIDES, g.get(cur, ())) if nxt]
+        edges = [(nxt, ("side", side)) for side, nxt in zip(SIDES, g.get(cur, ())) if nxt and side not in dead.get(str(cur), ())]
         edges += [(int(d["to"]), ("door", d)) for d in doors.get(cur, ()) if d.get("to")]
         for nxt, step in edges:
             if nxt in prev: continue
@@ -58,11 +71,11 @@ def route(start, goal):
 
 def distances(start):
     """BFS over maps (sides + learned doors): {map id: number of steps} from `start`."""
-    g = graph(); doors = gamedoors.load(); start = int(start)
+    g = graph(); doors = gamedoors.load(); dead = blocked_edges(); start = int(start)
     dist = {start: 0}; queue = collections.deque([start])
     while queue:
         cur = queue.popleft()
-        nxts = [n for n in g.get(cur, ()) if n] + [int(d["to"]) for d in doors.get(cur, ()) if d.get("to")]
+        nxts = [n for side, n in zip(SIDES, g.get(cur, ())) if n and side not in dead.get(str(cur), ())] + [int(d["to"]) for d in doors.get(cur, ()) if d.get("to")]
         for n in nxts:
             if n not in dist: dist[n] = dist[cur] + 1; queue.append(n)
     return dist
@@ -318,7 +331,7 @@ class Autopilot:
 
     def _travel(self, goal):
         """Walk/use doors until map `goal` is reached. A step must change the map: if it does not, give up instead of looping."""
-        prev = None
+        prev = None; blocked_retries = 0
         for _ in range(MAX_TRAVEL_STEPS):
             cur = self.s.map_id
             if not self._alive(): return False
@@ -333,7 +346,11 @@ class Autopilot:
                 if kind == "side": self._act(f"Changer de carte ({arg})", lambda: self.s._do_change_map(arg))
                 elif arg.get("kind") == "step": self._act(f"Marcher sur la case {arg['cell']}", lambda: self.s._do_step(arg["cell"]))
                 else: self._act(f"Utiliser l'élément {arg['element']}", lambda: self.s._do_use(arg["element"]))
-            except RuntimeError as e: self.say("error", f"voyage interrompu : {e}"); return False
+            except RuntimeError as e:
+                if kind == "side" and ("case de sortie" in str(e) or "carte voisine" in str(e)) and blocked_retries < 3:
+                    block_edge(cur, arg); blocked_retries += 1; prev = None   # this border cannot be crossed on foot: remember it and plan another way
+                    self.say("warn", f"sortie {arg} impossible depuis la carte {cur} (notée) : nouvel itinéraire"); continue
+                self.say("error", f"voyage interrompu : {e}"); return False
         self.say("error", "voyage trop long, abandon"); return False
 
     def _dialog(self):
