@@ -38,10 +38,11 @@ def connection_step(token, device_hash, server_id=SERVER_ID):
     c.s.close()
     return ticket, host
 
-def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, enter_map=False):
+def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, enter_map=False, max_seconds=None):
     """Handshake (+ character selection if enter). collect: list that receives every (type, body) the server pushes.
     enter_map: after the selection burst, send the client's READY requests so the server also pushes the current map (jow).
-    Returns the connection once the server has been silent for `idle` seconds (or closed it)."""
+    Returns the connection once the server has been silent for `idle` seconds, closed it, or max_seconds elapsed."""
+    import time; t0 = time.time()
     c = GameConn(host, PORT); c.s.settimeout(idle)
     c.send(request(KNC, f_bytes(1, ticket) + f_bytes(2, "fr")))
     char_id = None; sent_kod = False
@@ -51,6 +52,7 @@ def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, ent
             if not quiet: print("recv:", e)
             break
         if collect is not None: collect.append((t, body))
+        if max_seconds and time.time() - t0 > max_seconds: break
         if not quiet: print(t, len(body))
         if t == IZN and enter_map and enter:
             for name, b in READY: c.send(request(name, b))

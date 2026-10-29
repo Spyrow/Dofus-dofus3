@@ -15,7 +15,7 @@ def fetch_snapshot(aid, idle=6):
     token = create_game_token(key, GAME_IDS["dofus"], cert_id, cert_hash)
     ticket, host = login.connection_step(token, cert_hash)
     msgs = []
-    c = login.game_step(ticket, host, enter=True, idle=idle, collect=msgs, quiet=True, enter_map=True)
+    c = login.game_step(ticket, host, enter=True, idle=idle, collect=msgs, quiet=True, enter_map=True, max_seconds=25)
     c.s.close()
     snap = gamestate.snapshot(msgs, host)
     if not snap.get("characteristics"): raise SystemExit("le serveur n'a envoyé aucune caractéristique (personnage non sélectionné ?)")
