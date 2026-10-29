@@ -17,6 +17,7 @@ def main():
     ap.add_argument("--game-id", type=int, default=GAME_IDS["dofus"])
     ap.add_argument("--headless", action="store_true", help="login/password instead of the browser")
     ap.add_argument("--refresh", action="store_true", help="no UI: reuse the refresh token saved by a previous browser login")
+    ap.add_argument("--enter", action="store_true", help="after the handshake, select the character (kta) so the server pushes the game state")
     a = ap.parse_args()
     if a.refresh:
         saved = store.load() or sys.exit("no saved tokens: run once without --refresh (browser login)")
@@ -35,7 +36,7 @@ def main():
         if tok.get("refresh_token"): store.save(access, tok["refresh_token"])   # enables --refresh next time
     token = create_game_token(access, a.game_id, *shield.certificate_args())
     print("game token length:", len(token), file=sys.stderr)   # never print the token itself
-    game_login.main(token)
+    game_login.main(token, a.enter)
 
 if __name__ == "__main__":
     main()
