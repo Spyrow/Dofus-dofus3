@@ -1,6 +1,6 @@
 """Multi-account store for the web UI: %APPDATA%/dofus_net/accounts.json (same folder as store.py, OUTSIDE the repo).
 
-Character snapshots live in %APPDATA%/dofus_net/characters/<account id>.json. Nothing in this repo fills them yet
+Character snapshots (keys: character, characteristics, equipment, inventory, jobs, spells) live in %APPDATA%/dofus_net/characters/<account id>.json. Nothing in this repo fills them yet
 (the game protocol is only decoded up to the handshake, see login.py): whatever later decodes the game stream should
 write that file, schema in sample_character() below.
 """
@@ -110,4 +110,17 @@ def sample_character():
             {"slot": "Cape", "name": "Cape d'exemple", "level": 190, "stats": ["+300 Vitalité", "+5% Résistance Air"]},
             {"slot": "Arme", "name": "Arc d'exemple", "level": 200, "stats": ["Dégâts Eau 40-50", "+1 PO"]},
             {"slot": "Anneau 1", "name": None}, {"slot": "Anneau 2", "name": None},
-            {"slot": "Amulette", "name": "Amulette d'exemple", "level": 198, "stats": ["+1 PA", "+60 Initiative"]}]}
+            {"slot": "Amulette", "name": "Amulette d'exemple", "level": 198, "stats": ["+1 PA", "+60 Initiative"]}],
+        "inventory": {"capacity": 5000, "items": [
+            {"name": "Blé", "type": "Ressource", "level": 1, "qty": 342},
+            {"name": "Peau de Bouftou", "type": "Ressource", "level": 10, "qty": 58},
+            {"name": "Potion de rappel", "type": "Consommable", "level": 1, "qty": 12},
+            {"name": "Épée d'exemple", "type": "Arme", "level": 120, "qty": 1}]},
+        "jobs": [{"name": "Paysan", "level": 100, "xp_pct": 35}, {"name": "Boulanger", "level": 87, "xp_pct": 60},
+                 {"name": "Bûcheron", "level": 12, "xp_pct": 5}],
+        "spells": [
+            {"name": "Flèche magique", "level": 6, "ap": 3, "range": "1-12", "cooldown": 0, "element": "Feu",
+             "desc": "Inflige des dégâts de feu à distance."},
+            {"name": "Flèche de dispersion", "level": 6, "ap": 3, "range": "1-10", "cooldown": 2, "element": "Eau",
+             "desc": "Inflige des dégâts d'eau et retire des PM."},
+            {"name": "Tir critique", "level": 5, "ap": 4, "range": "1-9", "cooldown": 1, "element": "Air", "desc": ""}]}

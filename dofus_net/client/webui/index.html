@@ -21,6 +21,9 @@ button.p{background:var(--acc);border-color:var(--acc);color:#fff}button.d{color
 .stats{color:var(--mut);font-size:13px}.top{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
 .top h1{flex:1;margin:0;font-size:22px}.msg{color:var(--mut)}.err{color:var(--bad)}
 .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc)}
+.tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}.tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+table{width:100%;border-collapse:collapse;margin-top:8px}th,td{text-align:left;padding:6px 8px;border-bottom:1px dashed var(--line);vertical-align:top}th{color:var(--mut);font-weight:500;font-size:13px}.n{text-align:right}
+input{font:inherit;width:100%;max-width:320px;padding:6px 10px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
 @media(max-width:700px){.app{grid-template-columns:1fr}aside{border:0;border-bottom:1px solid var(--line)}}
 </style></head><body>
 <div class="app">
@@ -42,8 +45,8 @@ async function api(path,method="GET",body){
   if(!r.ok)throw Object.assign(new Error(j?.error||r.statusText),{status:r.status});
   return j;
 }
-let accts=[],sel=null;
-try{sel=localStorage.getItem("sel")}catch{}
+let accts=[],sel=null,tab="fiche",invQ="";
+try{sel=localStorage.getItem("sel");tab=localStorage.getItem("tab")||"fiche"}catch{}
 
 async function loadList(){
   accts=await api("/api/accounts");
@@ -75,14 +78,25 @@ async function render(){
   if(sel!==a.id)return;
   const c=d.character||{};
   const info=[["Classe",c.breed],["Sexe",c.sex],["Serveur",c.server],["Guilde",c.guild],["Kamas",c.kamas!=null?c.kamas.toLocaleString("fr-FR"):null]].filter(r=>r[1]);
-  $("#char").innerHTML=`
-   <div class="card"><h2>${esc(c.name||"Personnage")} ${c.level?`<span class="msg">· niveau ${esc(c.level)}</span>`:""}</h2>
-     ${c.xp_pct!=null?`<div class="bar"><i style="width:${Math.max(0,Math.min(100,+c.xp_pct||0))}%"></i></div>`:""}
+  const none='<p class="msg">Aucune donnée.</p>', pct=v=>Math.max(0,Math.min(100,+v||0));
+  const bar=v=>v!=null?`<div class="bar"><i style="width:${pct(v)}%"></i></div>`:"";
+  const tabs={
+   fiche:()=>`<div class="card"><h2>${esc(c.name||"Personnage")} ${c.level?`<span class="msg">· niveau ${esc(c.level)}</span>`:""}</h2>${bar(c.xp_pct)}
      ${info.map(r=>`<div class="row"><span>${r[0]}</span><span>${esc(r[1])}</span></div>`).join("")}</div>
-   <div class="grid">
-     <div class="card"><h2>Caractéristiques</h2>${Object.entries(d.characteristics||{}).map(([g,v])=>`<p class="msg" style="margin:10px 0 2px">${esc(g)}</p>${Object.entries(v).map(([k,x])=>`<div class="row"><span>${esc(k)}</span><span>${esc(x)}</span></div>`).join("")}`).join("")||'<p class="msg">—</p>'}</div>
-     <div class="card"><h2>Équipement</h2>${(d.equipment||[]).map(i=>`<div class="slot"><span class="msg">${esc(i.slot)}</span> — ${i.name?`<b>${esc(i.name)}</b>${i.level?` <span class="msg">niv. ${esc(i.level)}</span>`:""}<div class="stats">${(i.stats||[]).map(esc).join(" · ")}</div>`:"<em>vide</em>"}</div>`).join("")||'<p class="msg">—</p>'}</div>
-   </div>`;
+    <div class="grid">
+     <div class="card"><h2>Caractéristiques</h2>${Object.entries(d.characteristics||{}).map(([g,v])=>`<p class="msg" style="margin:10px 0 2px">${esc(g)}</p>${Object.entries(v).map(([k,x])=>`<div class="row"><span>${esc(k)}</span><span>${esc(x)}</span></div>`).join("")}`).join("")||none}</div>
+     <div class="card"><h2>Équipement</h2>${(d.equipment||[]).map(i=>`<div class="slot"><span class="msg">${esc(i.slot)}</span> — ${i.name?`<b>${esc(i.name)}</b>${i.level?` <span class="msg">niv. ${esc(i.level)}</span>`:""}<div class="stats">${(i.stats||[]).map(esc).join(" · ")}</div>`:"<em>vide</em>"}</div>`).join("")||none}</div></div>`,
+   inv:()=>{
+     const inv=d.inventory||{},items=(inv.items||[]).filter(i=>!invQ||(i.name+" "+(i.type||"")).toLowerCase().includes(invQ.toLowerCase()));
+     return `<div class="card"><h2>Inventaire ${inv.items?`<span class="msg">· ${inv.items.length}${inv.capacity?" / "+inv.capacity:""} objets</span>`:""}</h2>
+      <input id="invq" placeholder="Filtrer (nom, type)…" value="${esc(invQ)}">
+      ${items.length?`<table><tr><th>Objet</th><th>Type</th><th class="n">Niv.</th><th class="n">Qté</th></tr>${items.map(i=>`<tr><td>${esc(i.name)}</td><td class="msg">${esc(i.type)}</td><td class="n">${esc(i.level)}</td><td class="n">${esc((i.qty??1).toLocaleString("fr-FR"))}</td></tr>`).join("")}</table>`:none}</div>`},
+   jobs:()=>`<div class="card"><h2>Métiers</h2>${(d.jobs||[]).map(j=>`<div style="margin:10px 0"><div class="row"><span><b style="color:var(--fg)">${esc(j.name)}</b></span><span>niveau ${esc(j.level)}</span></div>${bar(j.xp_pct)}</div>`).join("")||none}</div>`,
+   spells:()=>`<div class="card"><h2>Sorts</h2>${(d.spells||[]).length?`<table><tr><th>Sort</th><th>Élément</th><th class="n">Niv.</th><th class="n">PA</th><th>Portée</th><th class="n">Relance</th></tr>${d.spells.map(x=>`<tr><td><b>${esc(x.name)}</b>${x.desc?`<div class="stats">${esc(x.desc)}</div>`:""}</td><td class="msg">${esc(x.element)}</td><td class="n">${esc(x.level)}</td><td class="n">${esc(x.ap)}</td><td>${esc(x.range)}</td><td class="n">${x.cooldown?esc(x.cooldown)+" t.":"—"}</td></tr>`).join("")}</table>`:none}</div>`};
+  if(!tabs[tab])tab="fiche";
+  $("#char").innerHTML=`<div class="tabs">${[["fiche","Fiche"],["inv","Inventaire"],["jobs","Métiers"],["spells","Sorts"]].map(t=>`<button class="${t[0]===tab?"on":""}" data-t="${t[0]}">${t[1]}</button>`).join("")}</div>`+tabs[tab]();
+  document.querySelectorAll(".tabs button").forEach(e=>e.onclick=()=>{tab=e.dataset.t;try{localStorage.setItem("tab",tab)}catch{};render()});
+  const q=$("#invq");if(q){q.oninput=()=>{invQ=q.value;const pos=q.selectionStart;render().then(()=>{const n=$("#invq");n&&(n.focus(),n.setSelectionRange(pos,pos))})};}
 }
 async function act(fn){
   try{await fn();await loadList()}catch(e){await loadList();const el=$("#acterr");if(el)el.textContent=e.message}
