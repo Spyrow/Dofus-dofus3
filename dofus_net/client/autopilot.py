@@ -172,7 +172,7 @@ class Autopilot:
     def _fight_objective(self, qid, oid):
         """Fight the best group on this map; if there is none, visit the nearest map where a wanted monster lives (up to MAX_SEARCH_MAPS)."""
         self.attempts[oid] += 1
-        visited = set()
+        visited = set(); travel_failures = 0
         for _ in range(MAX_SEARCH_MAPS + 1):
             if not self._alive(): return False
             wanted = self._wanted_monsters()
@@ -193,8 +193,10 @@ class Autopilot:
             if not reachable: self.say("warn", "aucune carte accessible où ces monstres apparaissent"); return False
             nxt = reachable[0][1]
             self.say("info", f"aucun groupe adapté ici : recherche sur la carte {nxt} ({reachable[0][0]} étape(s))")
-            if not self._travel(nxt): visited.add(nxt)
-            else: time.sleep(2.0)   # let the map's actors arrive
+            if not self._travel(nxt):
+                visited.add(nxt); travel_failures += 1
+                if travel_failures >= 2: self.say("error", "déplacements refusés à répétition : session à relancer, arrêt"); return False
+            else: travel_failures = 0; time.sleep(2.0)   # let the map's actors arrive
         self.say("warn", "recherche de monstres abandonnée (trop de cartes visitées)"); return False
 
     # ---- one objective: travel, talk, answer ----

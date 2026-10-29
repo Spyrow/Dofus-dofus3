@@ -99,6 +99,8 @@ class H(BaseHTTPRequestHandler):
             else: self._json(data)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/quests", p):
             self._json(gamesession.session(m[1]).questview())
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/recent", p):   # diagnostics: the last messages received from the game server
+            self._json([{"t": ts, "type": t, "size": len(b), "hex": b.hex()[:80]} for ts, t, b in list(gamesession.session(m[1]).recent)[-80:]])
         elif m := re.fullmatch(r"/api/accounts/(\w+)/mapview", p):
             self._json(gamesession.session(m[1]).mapview())
         elif m := re.fullmatch(r"/api/accounts/(\w+)/session", p):

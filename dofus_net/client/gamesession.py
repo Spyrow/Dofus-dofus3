@@ -236,9 +236,12 @@ class Session:
             if path and (best is None or len(path) < len(best)): best = path
         if best is None: raise RuntimeError(f"aucune case de sortie atteignable ({side})")
         if len(best) > 1: self._walk(best)
-        self._mapchanged.clear()
-        self._send(login.JOC, f_varint(2, target)); self.log("action", f"→ joc : carte voisine {side} ({target})")
-        if not self._mapchanged.wait(8): raise RuntimeError("le serveur n'a pas changé de carte (jow)")
+        for attempt in (1, 2):   # the server sometimes ignores the first request right after a (re)connection: ask once more
+            self._mapchanged.clear()
+            self._send(login.JOC, f_varint(2, target)); self.log("action", f"→ joc : carte voisine {side} ({target})" + (" (2e essai)" if attempt == 2 else ""))
+            if self._mapchanged.wait(8): break
+            if attempt == 2: raise RuntimeError("le serveur n'a pas changé de carte (jow)")
+            time.sleep(2.0)
         time.sleep(1.0)   # let the new map's actors arrive (jnj) before the next decision
 
     def go(self, to):
