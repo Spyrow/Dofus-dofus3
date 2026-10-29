@@ -1,0 +1,14 @@
+# Ignorer tout (fichiers du jeu, captures, etc.)
+*
+
+# Sauf : ce fichier, la doc, et les dossiers de décompilation
+!.gitignore
+!*.md
+!decompiled*/
+!decompiled*/**
+!*decompil*/
+!*decompil*/**
+!il2cppdumper*/
+!il2cppdumper*/**
+!dump*/
+!dump*/**
