@@ -56,6 +56,12 @@ Le panneau de succès fait `mdm{onglet}` -> `mdo` (liste de succès) : ce ne son
   (`learn_doors.py` sur une capture, ou en utilisant l'élément depuis l'onglet Map). Base : `%APPDATA%/dofus_net/doors.json`, utilisée par le BFS de l'autopilote.
 - Le vrai client marche d'abord jusqu'à côté de la porte (`jok`, `jny`) puis envoie `itz`. Envoyer `itz` sans être à côté (cas testé sur « Champs ») est ignoré en silence. La case de la porte n'est ni dans `jnj` ni déductible de la position des bundles (calage pixels -> cases impossible : l'axe vertical n'est pas une coordonnée de sol).
 
+## Fin de dialogue et suivi de quête
+- Après un dialogue qui modifie une quête, le serveur envoie `icb {id quête}` ; le vrai client répond `ibv {3: id quête, 4: -1}` et le serveur renvoie les `icj` à jour
+  (implémenté dans `gamesession.py`). Une quête terminée disparaît de la liste (la suivante apparaît par `icj`).
+- Porte utilisable : il faut se tenir sur la case où le vrai client se tenait (`stand` dans `doors.json`, relevée par `tools/learn_doors.py`).
+- Test réel : autopilote Champs -> porte 489349 -> tour du Capitaine -> dialogue en 5 réponses -> quête « Mise à l'épreuve » terminée, « Champs de bataille » commencée.
+
 ## Combat (observé dans une capture, NON implémenté)
 - Entrée : `igk` (vide) puis, 1 s plus tard, serveur `jxi/jwj/jxh/jxm` (placement, liste des combattants avec leur case) ; `jxj {1:1}` = prêt -> serveur `juo` (combattants, cases) + `jti {2: id}` (début de tour).
 - Pendant le combat : `jok` (déplacement, même format qu'en exploration, avec l'id de la carte de combat), `jsr {1: id sort, 2: case}` (lancer un sort),

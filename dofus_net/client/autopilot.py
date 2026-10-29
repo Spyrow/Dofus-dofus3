@@ -115,8 +115,10 @@ class Autopilot:
                 o = gamedata.quest_data("objectives", oid) or {}
                 text = gamequests.objective_text(oid)
                 if o.get("type") in TALK_TYPES and o.get("map"):
-                    if self.attempts[oid] < MAX_ATTEMPTS: return (qid, oid), None
-                    unsupported = unsupported or f"objectif « {text} » : échec après {MAX_ATTEMPTS} essais"
+                    if self.attempts[oid] >= MAX_ATTEMPTS: unsupported = unsupported or f"objectif « {text} » : échec après {MAX_ATTEMPTS} essais"
+                    elif self.s.map_id != int(o["map"]) and route(self.s.map_id, int(o["map"])) is None:
+                        unsupported = unsupported or f"objectif « {text} » : aucune route connue (porte non apprise ?)"; continue
+                    else: return (qid, oid), None
                 elif o.get("type") in FIGHT_TYPES: unsupported = unsupported or f"objectif « {text} » : il faut un combat (non géré)"
                 else: unsupported = unsupported or f"objectif « {text} » : type non géré"
         return None, ("aucun objectif géré — " + unsupported) if unsupported else "aucune quête en cours"

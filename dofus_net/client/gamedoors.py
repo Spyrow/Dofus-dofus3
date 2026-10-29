@@ -19,17 +19,18 @@ def load():
     except (OSError, ValueError): return {}
 
 
-def record(frm, skill, element, cell, to):
-    """Remember that using `element` on map `frm` leads to map `to`. -> True if it was new."""
+def record(frm, skill, element, cell, to, stand=None):
+    """Remember that using `element` on map `frm` leads to map `to`; `stand` = the cell the player stood on to use it
+    (the real client walks next to the element first). -> True if it was new."""
     if not frm or not to or frm == to: return False
     with _lock:
         d = load(); lst = d.setdefault(int(frm), [])
         for e in lst:
             if e["element"] == element:
-                changed = e.get("to") != to or (cell is not None and e.get("cell") != cell)
-                e.update(skill=skill, cell=cell if cell is not None else e.get("cell"), to=to)
+                changed = e.get("to") != to or (cell is not None and e.get("cell") != cell) or (stand is not None and e.get("stand") != stand)
+                e.update(skill=skill, cell=cell if cell is not None else e.get("cell"), to=to, stand=stand if stand is not None else e.get("stand"))
                 break
-        else: lst.append({"skill": skill, "element": element, "cell": cell, "to": to}); changed = True
+        else: lst.append({"skill": skill, "element": element, "cell": cell, "to": to, "stand": stand}); changed = True
         if changed:
             os.makedirs(os.path.dirname(PATH), exist_ok=True)
             tmp = PATH + ".tmp"

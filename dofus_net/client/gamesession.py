@@ -89,6 +89,12 @@ class Session:
                 with self._lock: self.quests[q[0]] = (q[1], q[2])
                 name = (gamedata.quest_data("quests", q[0]) or {}).get("name") or q[0]
                 self.log("event", f"Quête « {name} » mise à jour : " + " ; ".join(f"{gamequests.objective_text(o)}{'' if a else ' ✓'}" for o, a in q[2].items()))
+        elif t == login.ICB:
+            qid = _vi(body, 1)
+            name = (gamedata.quest_data("quests", qid) or {}).get("name") or qid
+            self.log("event", f"Quête modifiée : « {name} »")
+            try: self._send(login.IBV, f_varint(3, qid) + f_varint(4, -1))   # same as the real client: the server answers with icj
+            except RuntimeError: pass
         elif t == login.IBG:
             oid, qid = _vi(body, 1), _vi(body, 2)
             self.log("event", f"Objectif accompli : {gamequests.objective_text(oid)}")
@@ -228,6 +234,11 @@ class Session:
         e = self.elements.get(element)
         if not e: raise RuntimeError("élément introuvable sur la carte")
         frm = self.map_id
+        known = next((d for d in gamedoors.from_map(frm) if d["element"] == element), None)
+        if known and known.get("stand") is not None and self.my_cell != known["stand"]:   # walk where the real client stood to use it
+            path, err = self.plan(known["stand"])
+            if err: raise RuntimeError(f"case d'utilisation inaccessible : {err}")
+            if len(path) > 1: self._walk(path)
         if e["cell"] is not None and self.my_cell != e["cell"]:   # the cell is unknown for now: the server is asked directly
             x, y = gamemaps.to_xy(e["cell"])
             adjacent = {gamemaps.from_xy(x + dx, y + dy) for dx, dy in gamemaps.DIRS} - {None}
@@ -243,7 +254,7 @@ class Session:
         self.log("action", f"→ itz : élément {element} (compétence {e['skill']})")
         if self._mapchanged.wait(8):
             time.sleep(1.0)
-            new = gamedoors.record(frm, e["skill"], element, e["cell"], self.map_id)
+            new = gamedoors.record(frm, e["skill"], element, e["cell"], self.map_id, known.get("stand") if known else None)
             info = gamedata.map_info(self.map_id)
             self.log("event", f"Passage {'appris' if new else 'connu'} : {frm} → {self.map_id}" + (f" ({info['subarea']} [{info['x']}, {info['y']}])" if info else ""))
         else:

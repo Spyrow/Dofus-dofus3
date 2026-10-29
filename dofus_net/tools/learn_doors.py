@@ -9,7 +9,7 @@ sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(os.path.dirname(HERE),
 import decode_pcap as d
 from scan_connect import find_tool
 import gamedoors
-from wire import parse
+from wire import parse, dec_varint
 from collections import Counter
 
 
@@ -40,6 +40,14 @@ def messages(pcap):
     return [m for m in out if m[2]]
 
 
+def last_cell(jok_body):
+    """Last cell of a client `jok` path (packed varints: direction << 12 | cell)."""
+    raw = next((v for f, v in parse(jok_body) if f == 1 and isinstance(v, bytes)), b"")
+    i, last = 0, None
+    while i < len(raw): v, i = dec_varint(raw, i); last = v & 0xFFF
+    return last
+
+
 def passages(msgs):
     found, cur, els = [], None, {}
     for i, (t, k, n, b) in enumerate(msgs):
@@ -47,8 +55,9 @@ def passages(msgs):
         elif k == "S" and n == "jnj": els.update(gamedoors.elements(b))
         elif k == "C" and n == "itz":
             skill, elem = vi(b, 1), vi(b, 3)
+            stand = next((last_cell(b2) for t2, k2, n2, b2 in reversed(msgs[:i]) if k2 == "C" and n2 == "jok" and t - t2 < 8), None)
             to = next((vi(b2, 1) for t2, k2, n2, b2 in msgs[i + 1:i + 80] if k2 == "S" and n2 == "jow" and t2 - t < 5), None)
-            if cur and to and to != cur: found.append((cur, skill, elem, (els.get(elem) or {}).get('cell'), to))
+            if cur and to and to != cur: found.append((cur, skill, elem, (els.get(elem) or {}).get('cell'), to, stand))
     return found
 
 
@@ -56,9 +65,9 @@ def main():
     if len(sys.argv) < 2: sys.exit(__doc__)
     new = total = 0
     for pcap in sys.argv[1:]:
-        for frm, skill, elem, cell, to in passages(messages(pcap)):
-            total += 1; added = gamedoors.record(frm, skill, elem, cell, to); new += added
-            print(f"{'+' if added else '='} map {frm} --[element {elem}, skill {skill}, cell {cell}]--> map {to}")
+        for frm, skill, elem, cell, to, stand in passages(messages(pcap)):
+            total += 1; added = gamedoors.record(frm, skill, elem, cell, to, stand); new += added
+            print(f"{'+' if added else '='} map {frm} --[element {elem}, skill {skill}, stand on cell {stand}]--> map {to}")
     print(f"{total} passage(s), {new} new -> {gamedoors.PATH}")
 
 
