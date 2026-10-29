@@ -16,6 +16,19 @@ def data():
     return _data
 
 
+_quest = None
+
+
+def quest_data(table, key):
+    """Lookup in questdata.json (quests, steps, objectives, npcs, monsters, replies, messages, objective_types)."""
+    global _quest
+    if _quest is None:
+        try:
+            with open(os.path.join(os.path.dirname(PATH), "questdata.json"), encoding="utf8") as f: _quest = json.load(f)
+        except (OSError, ValueError): _quest = {}
+    return _quest.get(table, {}).get(str(key))
+
+
 def get(table, key):
     return data().get(table, {}).get(str(key))
 

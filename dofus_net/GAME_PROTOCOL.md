@@ -34,5 +34,21 @@ Le panneau de succès fait `mdm{onglet}` -> `mdo` (liste de succès) : ce ne son
 - Changement de carte par le bord : marcher jusqu'à une case dont `mapChangeData` contient le bit du côté, `jny`, puis `joc {2: id voisin du bundle}` -> `jow` (id de la nouvelle carte, format différent de celui de `joc`).
   Arrivée sur une case de bord : `joc` peut être renvoyé sans marcher (test : aller-retour Astrub 5,-17 <-> 6,-17).
 
+## Quêtes et dialogues (implémenté dans `client/gamequests.py` + `gamesession.py`, lecture vérifiée en jeu)
+- Connexion : `ica {5: quêtes terminées, 6: quêtes actives}` puis un `icj` par quête active. `icj {1: {1: id quête, 3: {1: id étape, 3: [{1: 1 = en cours (absent = terminé), 4: id objectif}]}}}`.
+  Mises à jour : `icb {id quête}`, `ibg {1: id objectif, 2: id quête}` (objectif accompli).
+- Données statiques (`questdata.json` via `tools/export_gamedata.py`) : quêtes -> étapes -> objectifs ; types d'objectif (1 « Aller voir #1 », 6/14 « Vaincre x#2 #1 », 3 « Ramener »…).
+- Un PNJ de la carte est un acteur à id négatif ; son modèle est en `3.1.4.7` de l'entrée `jnj`/`jns` (-> table `npcs`).
+- Dialogue : `ilt {1: 3 (= Parler, table npcactions), 2: id carte, 3: id acteur PNJ}` -> `ilx {3: carte, 5: acteur}` + `ilf {1: [{1: id réplique}], 3: id message PNJ}` ;
+  réponse du joueur : `iky {1: id réplique}` -> nouvel `ilf`, ou `kis` (fin) + `icb`/`icj`. Textes : `npcs[].dialogMessages / dialogReplies` = paires `[id, id i18n]`.
+  Un `ilm` vide en réponse à `ilt` = refus (PNJ sans dialogue pour l'état de quête courant).
+- Succès : `mdw {-1}` réclame les récompenses (`mdj {id}` par succès obtenu).
+
+## Combat (observé dans une capture, NON implémenté)
+- Entrée : `igk` (vide) puis, 1 s plus tard, serveur `jxi/jwj/jxh/jxm` (placement, liste des combattants avec leur case) ; `jxj {1:1}` = prêt -> serveur `juo` (combattants, cases) + `jti {2: id}` (début de tour).
+- Pendant le combat : `jok` (déplacement, même format qu'en exploration, avec l'id de la carte de combat), `jsr {1: id sort, 2: case}` (lancer un sort),
+  `jwo` (fin de tour probable), `jst {2: id action, 3: 1}` (acquittement d'une séquence d'animation du serveur), `jtd {1:1}` (prêt/tour suivant, à confirmer).
+- Réponses du serveur très verbeuses : `jqh`, `jsy`, `jsq`, `jtk`, `juh`, `jqk`, `jup`, `jug`… (séquences d'actions, PV/PA/PM) : à décoder.
+
 ## Données statiques (`tools/export_gamedata.py`)
 Bundles Unity `Dofus_Data/StreamingAssets/Content/Data/*.asset.bundle` + textes `Content/I18n/<lang>.bin` (index u32 id/offset, chaînes varint+UTF-8).

@@ -97,6 +97,8 @@ class H(BaseHTTPRequestHandler):
             data = accounts.sample_character() if aid == "demo" else accounts.load_character(aid)
             if data is None: self._json({"error": "no_snapshot"}, 404)
             else: self._json(data)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/quests", p):
+            self._json(gamesession.session(m[1]).questview())
         elif m := re.fullmatch(r"/api/accounts/(\w+)/mapview", p):
             self._json(gamesession.session(m[1]).mapview())
         elif m := re.fullmatch(r"/api/accounts/(\w+)/session", p):
@@ -134,6 +136,12 @@ class H(BaseHTTPRequestHandler):
                 if not sess.start(): return self._json({"error": "session déjà active"}, 409)
             else: sess.stop()
             self._json(sess.view(sess.seq), 202)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/(talk|reply)", p):
+            try: n = int(body.get("actor" if m[2] == "talk" else "id"))
+            except (TypeError, ValueError): return self._json({"error": "bad request"}, 400)
+            sess = gamesession.session(m[1])
+            err = sess.talk(n) if m[2] == "talk" else sess.reply(n)
+            self._json({"error": err} if err else {"ok": True}, 409 if err else 202)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/(path|go|changemap)", p):
             sess = gamesession.session(m[1])
             if m[2] == "changemap":

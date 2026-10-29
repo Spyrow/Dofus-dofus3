@@ -113,12 +113,14 @@ async function render(){
   tabs.combat=()=>'<div id="combat"><p class="msg">Chargement…</p></div>';
   tabs.map=()=>'<div id="curmap"></div><div id="map"></div>';
   tabs.console=()=>consoleHtml(a);
+  tabs.quests=()=>'<div id="qv"></div>';
   if(!tabs[tab])tab="fiche";
-  $("#char").innerHTML=`<div class="tabs">${[["fiche","Fiche"],["inv","Inventaire"],["jobs","Métiers"],["spells","Sorts"],["combat","Combat"],["map","Map"],["console","Console"]].map(t=>`<button class="${t[0]===tab?"on":""}" data-t="${t[0]}">${t[1]}</button>`).join("")}</div>`+tabs[tab]();
+  $("#char").innerHTML=`<div class="tabs">${[["fiche","Fiche"],["inv","Inventaire"],["jobs","Métiers"],["spells","Sorts"],["combat","Combat"],["map","Map"],["quests","Quêtes"],["console","Console"]].map(t=>`<button class="${t[0]===tab?"on":""}" data-t="${t[0]}">${t[1]}</button>`).join("")}</div>`+tabs[tab]();
   document.querySelectorAll(".tabs button").forEach(e=>e.onclick=()=>{tab=e.dataset.t;try{localStorage.setItem("tab",tab)}catch{};render()});
   if(tab==="combat")initCombat(a,d);
   if(tab==="map"){initCurMap(a);initMap(a,d)}
   if(tab==="console")initConsole(a);
+  if(tab==="quests")refreshQuests(a);
   const q=$("#invq");if(q){q.oninput=()=>{invQ=q.value;const pos=q.selectionStart;render().then(()=>{const n=$("#invq");n&&(n.focus(),n.setSelectionRange(pos,pos))})};}
 }
 // ---- Game session: status, journal ("Console" tab) ----
@@ -142,6 +144,7 @@ async function pollSession(){
   if(sel!==a.id)return;
   paintStatus();if(tab==="console"&&(v.log.length||v.chat.length))appendConsole(v);
   if(tab==="map")refreshCurMap();
+  if(tab==="quests")refreshQuests(a);
 }
 async function toggleSession(a){
   const v=SS[a.id]?.st?.status;
@@ -264,6 +267,31 @@ function drawCurMap(){
   for(const[id,c]of Object.entries(v.actors||{})){const[x,y]=cellC(c);g.beginPath();g.arc(x,y,4,0,7);g.fillStyle=col("--mut");g.fill()}
   for(const c of[CM.sel,CM.hover]){if(c==null)continue;dia(c);g.strokeStyle=col("--fg");g.lineWidth=2;g.stroke()}
   if(v.me!=null){const[x,y]=cellC(v.me);g.beginPath();g.arc(x,y,7,0,7);g.fillStyle=col("--acc");g.fill();g.strokeStyle="#fff";g.lineWidth=2;g.stroke()}
+}
+
+
+// ---- Quests and dialogs ----
+let qSig="";
+async function refreshQuests(a){
+  const box=$("#qv");if(!box)return;
+  if(a.demo){box.innerHTML='<div class="card"><h2>Quêtes</h2><p class="msg">Le compte de démonstration n\'a pas de quêtes en direct.</p></div>';return}
+  let v;try{v=await api(`/api/accounts/${a.id}/quests`)}catch(e){box.innerHTML=`<p class="err">${esc(e.message)}</p>`;return}
+  const sig=JSON.stringify(v);if(sig===qSig&&box.firstChild)return;qSig=sig;
+  const d=v.dialog,off=!v.live;
+  box.innerHTML=
+   (d?`<div class="card"><h2>Dialogue${d.npc?` <span class="msg">· ${esc(d.npc)}</span>`:""}</h2>
+      <p style="white-space:pre-wrap">${esc(d.text||"…")}</p>
+      ${(d.replies||[]).map(r=>`<p style="margin:6px 0"><button data-reply="${r.id}">${esc(r.text)}</button></p>`).join("")||'<p class="msg">Pas de réponse proposée.</p>'}</div>`:"")+
+   `<div class="card"><h2>PNJ sur la carte</h2>${v.npcs.length?`<table>${v.npcs.map(n=>`<tr><td>${esc(n.name)}</td><td class="msg">case ${esc(n.cell)}</td><td class="n"><button data-talk="${n.actor}" ${off||d?"disabled":""}>Parler</button></td></tr>`).join("")}</table>`:'<p class="msg">Aucun PNJ (connecte le personnage).</p>'}</div>
+    <div class="card"><h2>Quêtes en cours <span class="msg">· ${v.quests.length}</span></h2>${v.quests.map(q=>`<div style="margin:12px 0"><b>${esc(q.name)}</b>
+      ${q.desc?`<div class="stats">${esc(q.desc)}</div>`:""}
+      ${q.objectives.map(o=>`<div class="row"><span>${o.active?"○":"✓"} ${esc(o.text)}</span><span class="msg">${esc(o.where||"")}</span></div>`).join("")}</div>`).join("")||'<p class="msg">Aucune quête (connecte le personnage).</p>'}</div>`;
+  box.querySelectorAll("[data-talk]").forEach(b=>b.onclick=()=>questAct(a,"talk",{actor:+b.dataset.talk}));
+  box.querySelectorAll("[data-reply]").forEach(b=>b.onclick=()=>questAct(a,"reply",{id:+b.dataset.reply}));
+}
+async function questAct(a,what,body){
+  try{await api(`/api/accounts/${a.id}/${what}`,"POST",body)}catch(e){alert(e.message)}
+  qSig="";refreshQuests(a);
 }
 
 // ---- Combat: strategy editor + dry-run simulator (nothing here talks to the game) ----

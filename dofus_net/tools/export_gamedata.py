@@ -68,6 +68,30 @@ def main():
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f: json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
     print({k: len(v) for k, v in out.items() if isinstance(v, dict)}, "->", OUT)
+    export_quests(dd, t)
+
+
+def export_quests(dd, t):
+    """Quests / steps / objectives / NPCs / dialog texts -> %APPDATA%/dofus_net/questdata.json (loaded lazily by gamedata.py).
+    Dialog reply ids and NPC message ids are the [id, i18n id] pairs of each NPC's dialogReplies / dialogMessages."""
+    npcs = table(dd, "npcs"); replies, messages = {}, {}
+    for v in npcs.values():
+        for x in v.get("dialogReplies", []): replies.setdefault(x["values"][0], x["values"][1])
+        for x in v.get("dialogMessages", []): messages.setdefault(x["values"][0], x["values"][1])
+    for k, v in table(dd, "npcmessages").items(): messages.setdefault(k, v["messageId"])
+    q = {"objective_types": {k: t(v["nameId"]) for k, v in table(dd, "questobjectivetypes").items()},
+         "npcs": {k: t(v["nameId"]) for k, v in npcs.items()},
+         "monsters": {k: t(v["nameId"]) for k, v in table(dd, "monsters").items()},
+         "replies": {k: t(i) for k, i in replies.items()}, "messages": {k: t(i) for k, i in messages.items()},
+         "quests": {k: {"name": t(v["nameId"]), "steps": v["stepIds"], "level": v["levelMin"]} for k, v in table(dd, "quests").items()},
+         "steps": {k: {"name": t(v["nameId"]), "desc": t(v["descriptionId"]), "objectives": v["objectiveIds"], "quest": v["questId"]}
+                   for k, v in table(dd, "queststeps").items()},
+         "objectives": {k: {"type": v["typeId"], "p": [v["parameters"]["parameter0"], v["parameters"]["parameter1"], v["parameters"]["parameter2"]],
+                            "map": v["mapId"], "txt": t(v["parameters"]["parameter0"]) if v["typeId"] in (0, 4, 5) else None}
+                       for k, v in table(dd, "questobjectives").items()}}
+    path = os.path.join(os.path.dirname(OUT), "questdata.json")
+    with open(path, "w", encoding="utf-8") as f: json.dump(q, f, ensure_ascii=False, separators=(",", ":"))
+    print({k: len(v) for k, v in q.items()}, "->", path)
 
 
 if __name__ == "__main__":

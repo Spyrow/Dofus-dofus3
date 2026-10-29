@@ -13,6 +13,10 @@ import shield
 # obfuscated names, valid for the analysed build only: re-derive with tools/scan_connect.py after each update
 KNC, KOG, MEQ, KSJ, KSC, JPX, KOD, KTA = "knc", "kog", "meq", "ksj", "ksc", "jpx", "kod", "kta"
 IZN, JOW, KJT, JPE = "izn", "jow", "kjt", "jpe"
+JNS = "jns"   # one actor arriving on the map
+ILT, IKY = "ilt", "iky"   # talk to an NPC (action, map, actor) / choose a dialog reply
+ILX, ILF, KIS = "ilx", "ilf", "kis"   # dialog opened / next dialog step (replies + message) / dialog closed
+ICA, ICJ, ICB, IBG = "ica", "icj", "icb", "ibg"   # quest lists at login / quest state / quest changed / objective done
 JOK, JNY, JOC, JNZ, JNJ = "jok", "jny", "joc", "jnz", "jnj"   # move (path keys + map id), movement done, change map (neighbour id), actor path, map actors   # izn = last message of the character-selection burst; jow = map to load
 # requests the real client sends once the character is selected, ending with kkc (= world loaded, server then pushes the map)
 READY = [("lnt", f_varint(1, 1)), ("kne", f_varint(2, 1)), ("kkn", b""), ("kkt", b""), ("klu", b""), ("klx", b""), ("kmj", b""),

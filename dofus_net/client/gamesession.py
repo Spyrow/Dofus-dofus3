@@ -8,13 +8,18 @@ closed (a second session on the same account kicks the first, in both directions
 Chat: the chat messages are NOT decoded yet (none in the captures so far): `Session.chat` stays empty until gamestate
 learns the message; see add_chat()."""
 import collections, threading, time
-import accounts, shield, gamestate, gamedata, gamemaps, login
+import accounts, shield, gamestate, gamedata, gamemaps, gamequests, login
 from wire import parse, dec_varint, enc_varint, f_bytes, f_varint, request
 from haapi import create_game_token, GAME_IDS
 
-KEEP = {login.JNJ, login.JNZ, gamestate.KSC, gamestate.KRG, gamestate.IRL, gamestate.IQX, gamestate.IPE, gamestate.ISM, gamestate.JOW}
+QUEST_MSGS = {login.ICA, login.ICJ, login.ICB, login.IBG, login.ILX, login.ILF, login.KIS}
+KEEP = {login.JNJ, login.JNS, login.JNZ} | QUEST_MSGS | {gamestate.KSC, gamestate.KRG, gamestate.IRL, gamestate.IQX, gamestate.IPE, gamestate.ISM, gamestate.JOW}
 HEARTBEAT = 5          # seconds, same cadence as the real client's kne
 FLUSH = 2              # seconds between snapshot writes while connected
+
+
+def _vi(body, num):
+    return next((v for f, v in parse(body) if f == num and isinstance(v, int)), None)
 
 
 class Session:
@@ -27,6 +32,8 @@ class Session:
         self.character = self.map = None
         # current map state (reset on every jow): map id, our cell, other actors {id: cell}, our actor id
         self.map_id = self.my_cell = self.char_id = None; self.actors = {}; self.conn = None
+        self.npcs = {}; self.quests = {}; self.dialog = None   # actor id -> template id; quest id -> (step, objectives); open dialog
+        self._dialog_event = threading.Event(); self.recent = collections.deque(maxlen=200)   # (time, message type) of everything received
         self._act = threading.Lock(); self.busy = None; self._moved = threading.Event(); self._mapchanged = threading.Event()
         self._stop = threading.Event(); self._thread = None; self._lock = threading.RLock()
 
@@ -59,18 +66,37 @@ class Session:
             self.char_id = gamestate.selection(body)[0]
         elif t == gamestate.JOW:
             mid = next((v for f, v in parse(body) if f == 1 and isinstance(v, int)), None)
-            with self._lock: self.map_id, self.my_cell, self.actors = mid, None, {}
+            with self._lock: self.map_id, self.my_cell, self.actors, self.npcs = mid, None, {}, {}
             self._mapchanged.set()
-        elif t == login.JNJ:      # {3: [{1: actor id, 2: {3: cell, 4: direction}}], 10: map id}
+        elif t in (login.JNJ, login.JNS):      # jnj {3: [entry]} / jns {1: entry}; entry = {1: actor id, 2: {3: cell, 4: direction}, 3: ...}
             for f, v in parse(body):
-                if f != 3 or not isinstance(v, bytes): continue
-                e = dict(parse(v)); aid = e.get(1)
-                cell = next((c for f2, c in parse(e[2]) if f2 == 3 and isinstance(c, int)), None) if isinstance(e.get(2), bytes) else None
-                if isinstance(aid, int) and cell is not None:
-                    aid = aid - (1 << 64) if aid >= 1 << 63 else aid
-                    with self._lock:
-                        self.actors[aid] = cell
-                        if aid == self.char_id: self.my_cell = cell
+                if f != (3 if t == login.JNJ else 1) or not isinstance(v, bytes): continue
+                self._register_actor(v)
+        elif t == login.ICA:
+            with self._lock: self.quests = {q: (st, objs) for q, st, objs in gamequests.active_quests(body)}
+            self.log("event", f"Quêtes en cours : {len(self.quests)}")
+        elif t == login.ICJ:
+            q = gamequests.quest_state(body)
+            if q:
+                with self._lock: self.quests[q[0]] = (q[1], q[2])
+                name = (gamedata.quest_data("quests", q[0]) or {}).get("name") or q[0]
+                self.log("event", f"Quête « {name} » mise à jour : " + " ; ".join(f"{gamequests.objective_text(o)}{'' if a else ' ✓'}" for o, a in q[2].items()))
+        elif t == login.IBG:
+            oid, qid = _vi(body, 1), _vi(body, 2)
+            self.log("event", f"Objectif accompli : {gamequests.objective_text(oid)}")
+        elif t == login.ILX:
+            with self._lock: self.dialog = {"actor": _vi(body, 5), "text": None, "replies": []}
+        elif t == login.ILF:
+            msg, replies = gamequests.dialog_step(body)
+            text = gamedata.quest_data("messages", msg) or f"(message {msg})"
+            reps = [{"id": r, "text": gamedata.quest_data("replies", r) or f"(réponse {r})"} for r in replies]
+            with self._lock:
+                d = self.dialog or {"actor": None}; d.update(text=text, replies=reps); self.dialog = d
+            self.log("event", f"Dialogue : « {text[:120]} » — réponses : " + " | ".join(r["text"] for r in reps))
+            self._dialog_event.set()
+        elif t == login.KIS:
+            with self._lock: self.dialog = None
+            self.log("event", "Dialogue terminé"); self._dialog_event.set()
         elif t == login.JNZ:      # {1: packed path (cells), 4: actor id}
             e = dict(parse(body)); path = []; raw = e.get(1)
             if isinstance(raw, bytes):
@@ -83,6 +109,17 @@ class Session:
                 with self._lock:
                     self.actors[aid] = path[-1]
                     if aid == self.char_id: self.my_cell = path[-1]; self._moved.set()
+
+    def _register_actor(self, entry):
+        e = dict(parse(entry)); aid = e.get(1)
+        cell = next((c for f2, c in parse(e[2]) if f2 == 3 and isinstance(c, int)), None) if isinstance(e.get(2), bytes) else None
+        if not isinstance(aid, int) or cell is None: return
+        aid = aid - (1 << 64) if aid >= 1 << 63 else aid
+        with self._lock:
+            self.actors[aid] = cell
+            if aid == self.char_id: self.my_cell = cell
+            tpl = gamequests.npc_template(entry) if aid < 0 else None
+            if tpl: self.npcs[aid] = tpl
 
     def mapdata(self):
         return gamemaps.load(self.map_id) if self.map_id else None
@@ -98,6 +135,8 @@ class Session:
         info = gamedata.map_info(mid) if mid else None
         out = {"live": live, "map_id": mid, "info": info, "me": me, "busy": busy,
                "actors": {str(k): v for k, v in actors.items() if k != self.char_id}}
+        out["npcs"] = [{"actor": a, "cell": actors.get(a), "tpl": tpl, "name": gamedata.quest_data("npcs", tpl) or f"PNJ {tpl}"}
+                       for a, tpl in list(self.npcs.items())]
         if m:
             out["mov"] = "".join(str(c[0]) for c in m["cells"])
             near = gamedata.neighbours(mid)
@@ -170,6 +209,49 @@ class Session:
             if not self._mapchanged.wait(8): raise RuntimeError("le serveur n'a pas changé de carte (jow)")
         return self.start_action(f"Changer de carte ({side})", fn)
 
+    # ---- quests and dialogs ----
+    def questview(self):
+        with self._lock: quests, dialog, npcs, actors = dict(self.quests), dict(self.dialog) if self.dialog else None, dict(self.npcs), dict(self.actors)
+        d = None
+        if dialog:
+            tpl = npcs.get(dialog.get("actor")); d = dict(dialog, npc=gamedata.quest_data("npcs", tpl) if tpl else None)
+        return {"live": self.status == "connected", "quests": [gamequests.quest_view(q, st, objs) for q, (st, objs) in quests.items()], "dialog": d,
+                "npcs": [{"actor": a, "cell": actors.get(a), "name": gamedata.quest_data("npcs", t) or f"PNJ {t}"} for a, t in npcs.items()]}
+
+    def talk(self, actor):
+        """Walk next to the NPC, then send ilt (action 3 = Parler) and wait for the dialog to open."""
+        def fn():
+            with self._lock: cell = self.actors.get(actor); mid = self.map_id
+            m = self.mapdata()
+            if cell is None or not m: raise RuntimeError("PNJ introuvable sur la carte")
+            x, y = gamemaps.to_xy(cell)
+            adjacent = {gamemaps.from_xy(x + dx, y + dy) for dx, dy in gamemaps.DIRS} - {None}
+            if self.my_cell not in adjacent:
+                best = None
+                for c in adjacent:
+                    path, _ = self.plan(c)
+                    if path and (best is None or len(path) < len(best)): best = path
+                if best is None: raise RuntimeError("aucune case accessible à côté du PNJ")
+                if len(best) > 1: self._walk(best)
+            self._dialog_event.clear()
+            self._send(login.ILT, f_varint(1, 3) + f_varint(2, mid) + f_varint(3, actor))
+            self.log("action", f"→ ilt : parler au PNJ {actor}")
+            t0 = time.time()
+            if not self._dialog_event.wait(5):
+                seen = {}
+                for ts, t, b in self.recent:
+                    if ts >= t0 and str(t) not in seen and t not in ("knb", None): seen[str(t)] = b.hex()[:48]
+                raise RuntimeError("le PNJ n'a pas répondu (reçu : " + ("; ".join(f"{t}={h or '-'}" for t, h in seen.items()) or "rien") + ")")
+        return self.start_action(f"Parler au PNJ {actor}", fn)
+
+    def reply(self, rid):
+        def fn():
+            if not self.dialog or rid not in [r["id"] for r in self.dialog.get("replies", [])]: raise RuntimeError("réponse indisponible")
+            self._dialog_event.clear()
+            self._send(login.IKY, f_varint(1, rid)); self.log("action", f"→ iky : réponse {rid}")
+            if not self._dialog_event.wait(5): raise RuntimeError("pas de suite de dialogue")
+        return self.start_action(f"Répondre ({rid})", fn)
+
     # ---- lifecycle ----
     def start(self):
         with self._lock:
@@ -203,9 +285,10 @@ class Session:
                     state["dirty"], state["last_flush"] = False, time.time()
 
             def on_message(t, body):
+                self.recent.append((time.time(), t, body))
                 if t not in KEEP: return
                 self._on_map_message(t, body)
-                if t in (login.JNJ, login.JNZ): return
+                if t in (login.JNJ, login.JNS, login.JNZ) or t in QUEST_MSGS: return
                 if t == gamestate.KRG: state["msgs"] = [m for m in state["msgs"] if m[0] != gamestate.KRG]   # the latest wins
                 state["msgs"].append((t, body)); state["dirty"] = True
                 if t == gamestate.KSC:
