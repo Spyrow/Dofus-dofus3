@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dofus – Comptes</title>
+<style>
+:root{--bg:#f6f4ef;--card:#fff;--fg:#26231d;--mut:#7a7466;--line:#e3dfd3;--acc:#2f7d4f;--bad:#b3392b}
+@media(prefers-color-scheme:dark){:root{--bg:#171613;--card:#211f1b;--fg:#ece8dc;--mut:#9a9484;--line:#363229;--acc:#5fb583;--bad:#e0705f}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+.app{display:grid;grid-template-columns:280px 1fr;min-height:100vh}
+aside{border-right:1px solid var(--line);padding:16px}main{padding:24px;max-width:1000px}
+h1{font-size:17px;margin:0 0 12px}h2{font-size:15px;margin:0 0 10px}
+.acc{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;border-radius:8px;cursor:pointer;border:1px solid transparent}
+.acc:hover{background:var(--card)}.acc.sel{background:var(--card);border-color:var(--line)}
+.acc small{color:var(--mut);display:block}
+button{font:inherit;padding:6px 12px;border-radius:7px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+button.p{background:var(--acc);border-color:var(--acc);color:#fff}button.d{color:var(--bad)}button:disabled{opacity:.5;cursor:default}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed var(--line)}.row:last-child{border:0}
+.row span:first-child{color:var(--mut)}
+.slot{padding:8px 0;border-bottom:1px dashed var(--line)}.slot:last-child{border:0}.slot em{color:var(--mut)}
+.stats{color:var(--mut);font-size:13px}.top{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.top h1{flex:1;margin:0;font-size:22px}.msg{color:var(--mut)}.err{color:var(--bad)}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc)}
+@media(max-width:700px){.app{grid-template-columns:1fr}aside{border:0;border-bottom:1px solid var(--line)}}
+</style></head><body>
+<div class="app">
+<aside>
+  <h1>Comptes</h1>
+  <div id="list"></div>
+  <p><button class="p" id="add">+ Connecter un compte</button></p>
+  <p class="msg" id="loginmsg"></p>
+</aside>
+<main id="main"><p class="msg">Sélectionne un compte.</p></main>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt=t=>t?new Date(t*1000).toLocaleString("fr-FR"):"—";
+async function api(path,method="GET",body){
+  const r=await fetch(path,{method,headers:body?{"Content-Type":"application/json"}:{},body:body?JSON.stringify(body):undefined});
+  let j=null;try{j=await r.json()}catch{}
+  if(!r.ok)throw Object.assign(new Error(j?.error||r.statusText),{status:r.status});
+  return j;
+}
+let accts=[],sel=null;
+try{sel=localStorage.getItem("sel")}catch{}
+
+async function loadList(){
+  accts=await api("/api/accounts");
+  if(!accts.find(a=>a.id===sel))sel=accts[0]?.id||null;
+  $("#list").innerHTML=accts.map(a=>`<div class="acc ${a.id===sel?"sel":""}" data-id="${esc(a.id)}"><div>${esc(a.label)}<small>${a.demo?"exemple":"MAJ jeton : "+fmt(a.refreshed)}</small></div></div>`).join("");
+  document.querySelectorAll(".acc").forEach(e=>e.onclick=()=>{sel=e.dataset.id;try{localStorage.setItem("sel",sel)}catch{};loadList()});
+  render();
+}
+
+async function render(){
+  const a=accts.find(x=>x.id===sel),m=$("#main");
+  if(!a){m.innerHTML='<p class="msg">Aucun compte. Clique sur « Connecter un compte ».</p>';return}
+  m.innerHTML=`<div class="top"><h1>${esc(a.label)}</h1>
+    ${a.demo?"":'<button id="ren">Renommer</button><button id="ref">Rafraîchir le jeton</button><button class="d" id="del">Supprimer</button>'}</div>
+    <p class="msg err" id="acterr"></p><div id="char"><p class="msg">Chargement…</p></div>`;
+  if(!a.demo){
+    $("#ren").onclick=async()=>{const l=prompt("Nouveau nom",a.label);if(l)await act(()=>api(`/api/accounts/${a.id}/rename`,"POST",{label:l}))};
+    $("#ref").onclick=async e=>{e.target.disabled=true;await act(()=>api(`/api/accounts/${a.id}/refresh`,"POST",{}))};
+    $("#del").onclick=async()=>{if(confirm(`Supprimer « ${a.label} » ? Les jetons enregistrés seront effacés.`))await act(()=>api(`/api/accounts/${a.id}`,"DELETE"))};
+  }
+  let d;
+  try{d=await api(`/api/accounts/${a.id}/character`)}
+  catch(e){
+    $("#char").innerHTML=e.status===404
+      ?`<div class="card"><h2>Pas encore de données de personnage</h2><p class="msg">Le compte est enregistré, mais aucun instantané de personnage n'existe pour lui : le protocole de jeu n'est décodé que jusqu'à la poignée de main (login.py). Dès qu'un décodeur écrira <code>characters/${esc(a.id)}.json</code> dans le dossier de données, il s'affichera ici. Le compte « Démo » montre le rendu.</p></div>`
+      :`<p class="err">${esc(e.message)}</p>`;
+    return;
+  }
+  if(sel!==a.id)return;
+  const c=d.character||{};
+  const info=[["Classe",c.breed],["Sexe",c.sex],["Serveur",c.server],["Guilde",c.guild],["Kamas",c.kamas!=null?c.kamas.toLocaleString("fr-FR"):null]].filter(r=>r[1]);
+  $("#char").innerHTML=`
+   <div class="card"><h2>${esc(c.name||"Personnage")} ${c.level?`<span class="msg">· niveau ${esc(c.level)}</span>`:""}</h2>
+     ${c.xp_pct!=null?`<div class="bar"><i style="width:${Math.max(0,Math.min(100,+c.xp_pct||0))}%"></i></div>`:""}
+     ${info.map(r=>`<div class="row"><span>${r[0]}</span><span>${esc(r[1])}</span></div>`).join("")}</div>
+   <div class="grid">
+     <div class="card"><h2>Caractéristiques</h2>${Object.entries(d.characteristics||{}).map(([g,v])=>`<p class="msg" style="margin:10px 0 2px">${esc(g)}</p>${Object.entries(v).map(([k,x])=>`<div class="row"><span>${esc(k)}</span><span>${esc(x)}</span></div>`).join("")}`).join("")||'<p class="msg">—</p>'}</div>
+     <div class="card"><h2>Équipement</h2>${(d.equipment||[]).map(i=>`<div class="slot"><span class="msg">${esc(i.slot)}</span> — ${i.name?`<b>${esc(i.name)}</b>${i.level?` <span class="msg">niv. ${esc(i.level)}</span>`:""}<div class="stats">${(i.stats||[]).map(esc).join(" · ")}</div>`:"<em>vide</em>"}</div>`).join("")||'<p class="msg">—</p>'}</div>
+   </div>`;
+}
+async function act(fn){
+  try{await fn();await loadList()}catch(e){await loadList();const el=$("#acterr");if(el)el.textContent=e.message}
+}
+
+let poll=null;
+$("#add").onclick=async()=>{
+  const label=prompt("Nom du compte (optionnel)","")??null;if(label===null)return;
+  try{await api("/api/login","POST",{label});}catch(e){$("#loginmsg").textContent=e.message;return}
+  $("#add").disabled=true;$("#loginmsg").textContent="Connexion dans le navigateur ouvert… (ferme le launcher Ankama, port 9001)";
+  poll=setInterval(async()=>{
+    const s=await api("/api/login");
+    if(s.status==="waiting")return;
+    clearInterval(poll);$("#add").disabled=false;
+    $("#loginmsg").textContent=s.status==="done"?"Compte ajouté.":"Échec : "+s.error;
+    $("#loginmsg").className="msg"+(s.status==="error"?" err":"");
+    loadList();
+  },1500);
+};
+let evT=null;
+try{
+  const es=new EventSource("/api/events");   // live: reload when accounts or character snapshots change on disk
+  es.onmessage=e=>{if(e.data!=="changed")return;clearTimeout(evT);evT=setTimeout(()=>loadList().catch(()=>{}),150)};
+}catch{}
+loadList().catch(e=>$("#main").innerHTML=`<p class="err">${esc(e.message)}</p>`);
+</script></body></html>
