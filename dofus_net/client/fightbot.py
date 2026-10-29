@@ -73,6 +73,7 @@ class Fight:
     def reset(self):
         self.started, self.over, self.my_turn, self.cast_evt = (threading.Event() for _ in range(4))
         self.jvj_me = False; self.dead = set(); self.casts = {}
+        if not hasattr(self, "spell_score"): self.spell_score = {}   # spell id -> [reactions, silences], kept across fights
 
     # ---- messages (called from the session's receive loop) ----
     def on_message(self, t, body):
@@ -141,6 +142,13 @@ class Fight:
         if not self.over.wait(15): raise RuntimeError("fin du combat non reçue")
         say("terminé"); time.sleep(3)
 
+    def _score(self, spell_id, reacted):
+        ok, fail = self.spell_score.get(spell_id, [0, 0]); self.spell_score[spell_id] = [ok + bool(reacted), fail + (not reacted)]
+
+    def _rank(self, sp):
+        ok, fail = self.spell_score.get(sp["id"], [0, 0])
+        return (fail / (ok + fail) if ok + fail else 0.0, -ok)
+
     def _spells(self):
         out = []
         for sid in self.s.spell_ids:
@@ -161,15 +169,19 @@ class Fight:
             with s._lock: me = s.my_cell; enemies = {a: c for a, c in s.actors.items() if a < 0 and a not in self.dead}
             if me is None or not enemies or self.over.is_set(): return
             usable = [sp for sp in spells if sp["ap"] <= ap and (not sp["per_turn"] or casts.get(sp["id"], 0) < sp["per_turn"])]
+            usable.sort(key=self._rank)   # spells that have reacted before come first; silent ones last
             order = sorted(enemies, key=lambda a: dist(me, enemies[a]))
             m = s.mapdata()
             # 1. cast at the nearest enemy that a spell reaches (range + line of sight)
-            target = next(((a, sp) for a in order if a not in skipped for sp in usable
-                           if sp["min"] <= dist(me, enemies[a]) <= sp["max"] and los_clear(m, me, enemies[a])), None)
+            target = next(((a, sp) for a in order for sp in usable if (a, sp["id"]) not in skipped
+                           and sp["min"] <= dist(me, enemies[a]) <= sp["max"] and los_clear(m, me, enemies[a])), None)
             if target:
                 tid, sp = target; tcell = enemies[tid]; self.cast_evt.clear()
                 s._send(login.JSR, f_varint(1, sp["id"]) + f_varint(2, tcell)); say(f"{sp['name']} sur la case {tcell}")
-                if not self.cast_evt.wait(3): skipped.add(tid); say(f"pas de réaction de {tid} ce tour-ci : cible écartée jusqu'à la fin du tour"); continue
+                if not self.cast_evt.wait(3):
+                    skipped.add((tid, sp["id"])); self._score(sp["id"], False)
+                    say(f"pas de réaction de {tid} à « {sp['name']} » ce tour-ci : ce sort est écarté pour cette cible jusqu'à la fin du tour"); continue
+                self._score(sp["id"], True)
                 ap -= sp["ap"]; casts[sp["id"]] = casts.get(sp["id"], 0) + 1; moves_without_cast = 0; time.sleep(1.3); continue
             if not usable: return
             # 2. walk toward the nearest enemy (diagonal steps only)
@@ -191,10 +203,11 @@ class Fight:
                         raise RuntimeError(f"déplacement refusé (le serveur a répondu : {', '.join(got) or 'rien'})")
                     mp -= len(steps); moves_without_cast += 1; time.sleep(gamemaps.STEP_SECONDS * len(steps) + 0.6); continue
             # 3. last resort: let the server judge a cast in range even if my line-of-sight estimate says no
-            blind = next(((a, sp) for a in order if a not in skipped for sp in usable if sp["min"] <= dist(me, enemies[a]) <= sp["max"]), None)
+            blind = next(((a, sp) for a in order for sp in usable if (a, sp["id"]) not in skipped and sp["min"] <= dist(me, enemies[a]) <= sp["max"]), None)
             if blind:
                 tid, sp = blind; self.cast_evt.clear()
                 s._send(login.JSR, f_varint(1, sp["id"]) + f_varint(2, enemies[tid])); say(f"{sp['name']} sur la case {enemies[tid]} (sans ligne de vue estimée)")
-                if not self.cast_evt.wait(3): skipped.add(tid); continue
+                if not self.cast_evt.wait(3): skipped.add((tid, sp["id"])); self._score(sp["id"], False); continue
+                self._score(sp["id"], True)
                 ap -= sp["ap"]; casts[sp["id"]] = casts.get(sp["id"], 0) + 1; time.sleep(1.3); continue
             return

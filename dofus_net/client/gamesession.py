@@ -305,6 +305,7 @@ class Session:
         if len(path) > 1: self._walk(path)
 
     def _do_change_map(self, side):
+        start_map = self.map_id
         m = self.mapdata(); target = (m or {}).get("neighbours", {}).get(side)
         if not m or not target: raise RuntimeError(f"pas de carte voisine ({side})")
         best = None
@@ -313,6 +314,8 @@ class Session:
             if path and (best is None or len(path) < len(best)): best = path
         if best is None: raise RuntimeError(f"aucune case de sortie atteignable ({side})")
         if len(best) > 1: self._walk(best)
+        if self.map_id != start_map and self._mapchanged.is_set():   # some borders change the map as soon as the exit cell is reached: no joc to send
+            self.log("info", f"la carte a changé en marchant sur la case de sortie {best[-1]}"); time.sleep(1.0); return
         for attempt in (1, 2):   # the server sometimes ignores the first request right after a (re)connection: ask once more
             self._mapchanged.clear()
             self._send(login.JOC, f_varint(2, target)); self.log("action", f"→ joc : carte voisine {side} ({target})" + (" (2e essai)" if attempt == 2 else ""))
