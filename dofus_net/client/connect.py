@@ -8,7 +8,7 @@ import argparse, getpass, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pkce_login import login
 from haapi import create_game_token, create_api_key, refresh_api_key, GAME_IDS
-import store
+import store, shield
 import login as game_login
 
 def main():
@@ -33,7 +33,7 @@ def main():
         tok = login(a.provider)
         access = tok["access_token"]
         if tok.get("refresh_token"): store.save(access, tok["refresh_token"])   # enables --refresh next time
-    token = create_game_token(access, a.game_id)
+    token = create_game_token(access, a.game_id, *shield.certificate_args())
     print("game token length:", len(token), file=sys.stderr)   # never print the token itself
     game_login.main(token)
 
