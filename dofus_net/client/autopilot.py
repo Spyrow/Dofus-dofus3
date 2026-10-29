@@ -236,10 +236,11 @@ class Autopilot:
             r = route(cur, goal)
             if r is None: self.say("error", f"aucune route de la carte {cur} à la carte {goal} (porte non apprise, zaap ou carte inconnue ?)"); return False
             kind, arg = r[0]
-            self.say("info", f"voyage vers {goal} : {len(r)} étape(s), prochaine : " + (arg if kind == "side" else f"porte (élément {arg['element']})"))
+            self.say("info", f"voyage vers {goal} : {len(r)} étape(s), prochaine : " + (arg if kind == "side" else f"case-déclencheur {arg['cell']}" if arg.get("kind") == "step" else f"porte (élément {arg['element']})"))
             prev = cur
             try:
                 if kind == "side": self._act(f"Changer de carte ({arg})", lambda: self.s._do_change_map(arg))
+                elif arg.get("kind") == "step": self._act(f"Marcher sur la case {arg['cell']}", lambda: self.s._do_step(arg["cell"]))
                 else: self._act(f"Utiliser l'élément {arg['element']}", lambda: self.s._do_use(arg["element"]))
             except RuntimeError as e: self.say("error", f"voyage interrompu : {e}"); return False
         self.say("error", "voyage trop long, abandon"); return False

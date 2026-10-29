@@ -39,6 +39,23 @@ def record(frm, skill, element, cell, to, stand=None):
         return changed
 
 
+def record_step(frm, cell, to):
+    """A trigger cell: walking onto `cell` of map `frm` makes the server load map `to` (no itz / joc involved). -> True if new."""
+    if not frm or not to or frm == to: return False
+    with _lock:
+        d = load(); lst = d.setdefault(int(frm), [])
+        for e in lst:
+            if e.get("kind") == "step" and e.get("cell") == cell:
+                if e.get("to") == to: return False
+                e["to"] = to; break
+        else: lst.append({"kind": "step", "element": None, "skill": None, "cell": cell, "to": to, "stand": None})
+        os.makedirs(os.path.dirname(PATH), exist_ok=True)
+        tmp = PATH + ".tmp"
+        with open(tmp, "w", encoding="utf8") as f: json.dump({str(k): v for k, v in d.items()}, f, indent=1)
+        os.replace(tmp, PATH)
+        return True
+
+
 def elements(jnj_body):
     """jnj body -> {element id: {"skill": itz.1, "interactive": element model id (table `interactives`) or None, "type": skill type,
     "cell": None}}. The element's cell is NOT in this message (field 5.2 is not a cell)."""

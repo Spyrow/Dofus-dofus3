@@ -196,13 +196,14 @@ class Session:
     def _walk(self, path):
         """Send jok for `path`, wait for the server's jnz and the walking time, then confirm with jny."""
         keys = gamemaps.movement_keys(path)
-        self._moved.clear()
+        self._moved.clear(); self._mapchanged.clear()
         self._send(login.JOK, f_bytes(1, b"".join(enc_varint(k) for k in keys)) + f_varint(2, self.map_id))
         self.log("action", f"→ jok : {len(path) - 1} cases, de {path[0]} à {path[-1]}")
         if not self._moved.wait(3): raise RuntimeError("le serveur n'a pas confirmé le déplacement (jnz)")
         end = time.time() + gamemaps.duration(path)
         while time.time() < end:
             if self._stop.is_set(): raise RuntimeError("déconnecté")
+            if self._mapchanged.is_set(): return   # the last cell was a trigger: the server already loaded the next map (no jny)
             time.sleep(0.05)
         self._send(login.JNY); self.log("action", "→ jny (déplacement terminé)")
 
@@ -281,6 +282,14 @@ class Session:
             self.log("event", f"Passage {'appris' if new else 'connu'} : {frm} → {self.map_id}" + (f" ({info['subarea']} [{info['x']}, {info['y']}])" if info else ""))
         else:
             raise RuntimeError("aucun changement de carte après l'utilisation de l'élément (mauvaise case d'utilisation ?)")
+
+    def _do_step(self, cell):
+        """Walk onto a trigger cell: the server loads the next map by itself (learned passage, see gamedoors.record_step)."""
+        frm = self.map_id
+        self._mapchanged.clear()
+        if self.my_cell != cell: self._do_go(cell)
+        if not self._mapchanged.wait(8): raise RuntimeError("aucun changement de carte en marchant sur la case-déclencheur")
+        time.sleep(1.0)
 
     def use_element(self, element, stand=None):
         return self.start_action(f"Utiliser l'élément {element}", lambda: self._do_use(element, stand))

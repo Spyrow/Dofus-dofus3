@@ -61,11 +61,26 @@ def passages(msgs):
     return found
 
 
+def steps(msgs):
+    """Trigger cells: a client `jok` on the current map followed within 3 s by a server `jow` to another map, with no itz / joc in between."""
+    found, cur = [], None
+    for i, (t, k, n, b) in enumerate(msgs):
+        if k == "S" and n == "jow": cur = vi(b, 1)
+        elif k == "C" and n == "jok" and cur and vi(b, 2) == cur:
+            nxt = next(((n2, b2) for t2, k2, n2, b2 in msgs[i + 1:i + 60] if t2 - t < 3 and ((k2 == "S" and n2 == "jow") or (k2 == "C" and n2 in ("itz", "joc")))), None)
+            if nxt and nxt[0] == "jow" and vi(nxt[1], 1) != cur: found.append((cur, last_cell(b), vi(nxt[1], 1)))
+    return found
+
+
 def main():
     if len(sys.argv) < 2: sys.exit(__doc__)
     new = total = 0
     for pcap in sys.argv[1:]:
-        for frm, skill, elem, cell, to, stand in passages(messages(pcap)):
+        msgs = messages(pcap)
+        for frm, cell, to in steps(msgs):
+            total += 1; added = gamedoors.record_step(frm, cell, to); new += added
+            print(f"{'+' if added else '='} map {frm} --[walk onto cell {cell}]--> map {to}")
+        for frm, skill, elem, cell, to, stand in passages(msgs):
             total += 1; added = gamedoors.record(frm, skill, elem, cell, to, stand); new += added
             print(f"{'+' if added else '='} map {frm} --[element {elem}, skill {skill}, stand on cell {stand}]--> map {to}")
     print(f"{total} passage(s), {new} new -> {gamedoors.PATH}")
