@@ -1,0 +1,8 @@
+2x utf16 @0x25ce537068e re="amd64",publicKeyToken="6595b64144ccf1df",type="win32",version="1.0.26100.5074"C:\W
+1x utf16 @0x25ce53703e0 re="amd64",publicKeyToken="6595b64144ccf1df",type="win32",version="6.0.26100.1"System 
+1x utf16 @0x25ce53709fe re="amd64",publicKeyToken="6595b64144ccf1df",type="win32",version="1.1.26100.9711"C:\W
+1x utf16 @0x25ce5370d5e re="amd64",publicKeyToken="6595b64144ccf1df",type="win32",version="5.82.26100.8328"C:\
+1x utf16 @0x25ce5371504 re="amd64",publicKeyToken="6595b64144ccf1df",type="win32",version="5.82.26100.8117"C:\
+1x utf16 @0x25ce538052a re="amd64",publicKeyToken="6595b64144ccf1df",type="win32",version="6.0.26100.9711"C:\W
+1x utf16 @0x25ce53808f4 re="amd64",publicKeyToken="6595b64144ccf1df",type="win32",version="6.0.26100.8117"C:\W
+1x utf16 @0x25ce557ca50 e=neutral, PublicKeyToken=null
