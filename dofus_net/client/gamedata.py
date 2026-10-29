@@ -20,6 +20,36 @@ def get(table, key):
     return data().get(table, {}).get(str(key))
 
 
+def map_info(map_id):
+    """-> {x, y, map_id, name, subarea, area, world} or None for an unknown map / missing gamedata."""
+    m = get("maps", map_id)
+    if not m: return None
+    sub = get("subareas", m[3]) or [None, None]
+    area = get("areas", sub[1]) or [None, None]
+    return {"x": m[0], "y": m[1], "map_id": int(map_id), "name": m[2], "subarea": sub[0], "area": area[0],
+            "world": get("superareas", area[1])}
+
+
+def neighbours(map_id):
+    """-> {'right'|'bottom'|'left'|'top': neighbour map id} (existing edges only)."""
+    s = get("scroll", map_id) or [0, 0, 0, 0]
+    return {d: i for d, i in zip(("right", "bottom", "left", "top"), s) if i}
+
+
+def area_maps(map_id, limit=600):
+    """Coordinates of the maps in the same area as map_id (what the UI map tab draws as 'known' maps)."""
+    m = get("maps", map_id)
+    if not m: return []
+    area = (get("subareas", m[3]) or [None, None])[1]
+    out = []
+    for k, v in data().get("maps", {}).items():
+        sub = get("subareas", v[3])
+        if sub and sub[1] == area:
+            out.append({"x": v[0], "y": v[1], "name": v[2], "area": (get("areas", area) or [None])[0]})
+            if len(out) >= limit: break
+    return out
+
+
 def effect_text(effect_id, value):
     """'#1{{~1~2 à }}#2 Vitalité' + 5 -> '5 Vitalité' (second parameter dropped)."""
     d = get("effects", effect_id)

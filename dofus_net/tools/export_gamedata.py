@@ -59,6 +59,12 @@ def main():
     out["jobs"] = {k: t(v["nameId"]) for k, v in table(dd, "jobs").items()}
     out["breeds"] = {k: t(v["shortNameId"]) for k, v in table(dd, "breeds").items()}
     out["effects"] = {k: t(v["descriptionId"]) for k, v in table(dd, "effects").items()}
+    # maps: id -> [x, y, name, sub area id]; scroll: id -> [right, bottom, left, top] neighbour map ids (0 = none)
+    out["maps"] = {k: [v["posX"], v["posY"], t(v["nameId"]), v["subAreaId"]] for k, v in table(dd, "mapsinformation").items()}
+    out["scroll"] = {k: [v["rightMapId"], v["bottomMapId"], v["leftMapId"], v["topMapId"]] for k, v in table(dd, "mapscrollactions").items()}
+    out["subareas"] = {k: [t(v["nameId"]), v["areaId"]] for k, v in table(dd, "subareas").items()}
+    out["areas"] = {k: [t(v["nameId"]), v["superAreaId"]] for k, v in table(dd, "areas").items()}
+    out["superareas"] = {k: t(v["nameId"]) for k, v in table(dd, "superareas").items()}
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f: json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
     print({k: len(v) for k, v in out.items() if isinstance(v, dict)}, "->", OUT)

@@ -45,6 +45,9 @@ def run_capture():
     if cap.poll() is not None: sys.exit("dumpcap failed: " + cap.stderr.read() + "\n(try an elevated shell)")
     print("Capture running -> launch the game NOW (log in to the character screen), then close it or press Ctrl-C.", flush=True)
     try:
+        if dofus_running():   # a capture started mid-session cannot be framed: wait for the running game to close first
+            print("Dofus is already running: CLOSE it, then launch it again (capture restarts from the next launch).", flush=True)
+            while dofus_running(): time.sleep(1)
         while not dofus_running(): time.sleep(1)
         while dofus_running(): time.sleep(1)
         time.sleep(3)

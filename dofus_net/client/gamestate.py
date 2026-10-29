@@ -7,13 +7,15 @@ Message names are obfuscated and rotate every build (re-derive with tools/scan_c
   IRL  inventory items {2: [{1: {3: quantity, 4: item id, 5: unique id, 7: [{5: value, 10: effect id}]}, 4: position}]};
        position 63 = not equipped (Dofus 2 value). IQX = one item added later, same entry under field 2.
   IPE  jobs {1: [{2: job id, 3: level}]}
+  JOW  current map {1: map id} (pushed on every map load; map ids resolve through gamedata.map_info). TENTATIVE: verified
+       only against one capture (same id as the map of the actor list); confirm on a capture with a map change.
 Names come from gamedata.py (tools/export_gamedata.py); without it ids are shown raw. Spells were not found in the
 analysed capture (level-1 character): not decoded.
 """
 import gamedata
 from wire import parse
 
-KSC, KRG, IRL, IQX, IPE = "ksc", "krg", "irl", "iqx", "ipe"
+KSC, KRG, IRL, IQX, IPE, JOW = "ksc", "krg", "irl", "iqx", "ipe", "jow"
 KNOWN = {0: ("Vie", "Points de vie (base)"), 1: ("Points", "PA"), 23: ("Points", "PM"),   # fallback without gamedata
          26: ("Points", "Invocations"), 48: ("Vie", "Prospection")}
 NOT_EQUIPPED = 63
@@ -129,7 +131,7 @@ def _characteristic_groups(stats):
 def snapshot(messages, host=None):
     """messages: iterable of (type name, body). The LAST krg wins (the server re-sends it after entering the map)."""
     cid = name = stats = job_list = None
-    items = {}
+    items = {}; map_ids = []
     for t, body in messages:
         try:
             if t == KSC: cid, name = selection(body)
@@ -137,6 +139,9 @@ def snapshot(messages, host=None):
             elif t in (IRL, IQX):
                 for it in inventory_items(body): items[it["uid"] if it["uid"] is not None else len(items)] = it
             elif t == IPE: job_list = jobs(body)
+            elif t == JOW:
+                mid = next((v for f, v in parse(body) if f == 1 and isinstance(v, int)), None)
+                if mid and (not map_ids or map_ids[-1] != mid): map_ids.append(mid)
         except (ValueError, IndexError):
             continue
     snap = {"character": {}}
@@ -145,6 +150,14 @@ def snapshot(messages, host=None):
     if host and host.startswith("dofus2-ga-"): snap["character"]["server"] = host.split("-")[2].split(".")[0].capitalize()
     if stats: snap["characteristics"] = _characteristic_groups(stats)
     if items: snap["inventory"] = {"items": [_item_view(it) for it in items.values()]}
+    pos = gamedata.map_info(map_ids[-1]) if map_ids else None
+    if pos:
+        snap["position"] = pos
+        pos["exits"] = {d: {k: i[k] for k in ("x", "y", "map_id", "subarea") } for d, mid in gamedata.neighbours(pos["map_id"]).items()
+                        if (i := gamedata.map_info(mid))}
+        snap["maps"] = gamedata.area_maps(pos["map_id"])
+        snap["trail"] = [{"x": m["x"], "y": m["y"]} for m in map(gamedata.map_info, map_ids[:-1]) if m]
+    elif map_ids: snap["position"] = {"map_id": map_ids[-1]}
     if job_list:
         snap["jobs"] = [{"name": gamedata.get("jobs", j) or f"Métier #{j}", "level": lvl} for j, lvl in job_list if j != BASE_JOB]
     return snap

@@ -249,7 +249,7 @@ function initMap(a,d){
      Visualisation uniquement : le personnage n'est pas déplacé en jeu.</p></div>
      <div class="card"><h2>Map sélectionnée</h2>${s?`<div class="row"><span>Coordonnées</span><span>[${s.x}, ${s.y}]</span></div>
        ${m?`<div class="row"><span>Nom</span><span>${esc(m.name)}</span></div><div class="row"><span>Zone</span><span>${esc(m.area)}</span></div>`:'<p class="msg">Map non renseignée dans les données.</p>'}
-       ${here?`<div class="row"><span>Position actuelle</span><span>oui${pos.map_id?" · id "+esc(pos.map_id):""}</span></div>${pos.subarea?`<div class="row"><span>Sous-zone</span><span>${esc(pos.subarea)}</span></div>`:""}`:""}
+       ${here?`<div class="row"><span>Position actuelle</span><span>oui${pos.map_id?" · id "+esc(pos.map_id):""}</span></div>${pos.subarea?`<div class="row"><span>Sous-zone</span><span>${esc(pos.subarea)}</span></div>`:""}${Object.keys(pos.exits||{}).length?`<div class="row"><span>Sorties</span><span>${Object.entries(pos.exits).map(([d,e])=>({right:"→",left:"←",top:"↑",bottom:"↓"}[d]||d)+" ["+esc(e.x)+", "+esc(e.y)+"]").join(" · ")}</span></div>`:""}`:""}
        ${pos&&!here?`<div class="row"><span>Distance du personnage</span><span>${Math.abs(s.x-pos.x)+Math.abs(s.y-pos.y)} maps</span></div>`:""}`:'<p class="msg">Aucune sélection.</p>'}</div>`;
   };
   const pan=(dx,dy)=>{mapView.cx+=dx;mapView.cy+=dy;mapView.follow=false;draw();const w=box.querySelector('.mapwrap');w&&w.focus()};
