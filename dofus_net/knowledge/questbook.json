@@ -132,19 +132,23 @@
   },
   "1634": {
    "name": "Espoirs et tragédies",
-   "seen": 5,
+   "seen": 21,
    "steps": {
     "2254": {
      "name": "Espoirs et tragédies",
      "objectives": {
-      "9772": "Lire le livre contant la légende de Rykke Errel"
+      "9772": "Lire le livre contant la légende de Rykke Errel",
+      "9773": "Retourner voir Fécaline la Sage",
+      "9774": "Parler à un vieux de la vieille",
+      "9775": "Parler à une féline pantouflarde",
+      "9776": "Parler à un voleur malchanceux"
      }
     }
    }
   },
   "1639": {
    "name": "Transport peu commun",
-   "seen": 92,
+   "seen": 108,
    "steps": {
     "2259": {
      "name": "Transport peu commun",
@@ -247,7 +251,7 @@
   },
   "1648": {
    "name": "Des chafers qui marchent",
-   "seen": 29,
+   "seen": 45,
    "steps": {
     "2268": {
      "name": "Des chafers qui marchent",
@@ -263,7 +267,7 @@
   },
   "1649": {
    "name": "Produits naturels",
-   "seen": 92,
+   "seen": 108,
    "steps": {
     "2269": {
      "name": "Produits naturels",
@@ -277,7 +281,7 @@
   },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 92,
+   "seen": 108,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",

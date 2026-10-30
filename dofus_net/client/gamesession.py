@@ -403,7 +403,7 @@ class Session:
     def change_map(self, side):
         return self.start_action(f"Changer de carte ({side})", lambda: self._do_change_map(side))
 
-    def _do_use(self, element, stand=None):
+    def _do_use(self, element, stand=None, until=None):
         """Walk next to an interactive element, use it (itz) and learn where it leads if the map changes."""
         e = self.elements.get(element)
         if not e: raise RuntimeError("élément introuvable sur la carte")
@@ -427,6 +427,13 @@ class Session:
         self._mapchanged.clear()
         self._send(login.ITZ, (f_varint(1, e["skill"]) if e["skill"] else b"") + f_varint(3, element))   # protobuf omits a zero skill id
         self.log("action", f"→ itz : élément {element} (compétence {e['skill']})")
+        if until:      # quest objective ("read the book", "use ..."): done when until() says so; a map change is a door and learned below
+            t0 = time.time()
+            while time.time() - t0 < 4:
+                if until(): return True
+                if self._mapchanged.is_set(): break
+                time.sleep(0.2)
+            else: return False
         if self._mapchanged.wait(8):
             time.sleep(1.0)
             new = gamedoors.record(frm, e["skill"], element, e["cell"], self.map_id, known.get("stand") if known else None)
@@ -447,7 +454,8 @@ class Session:
         known = {d["element"] for d in gamedoors.from_map(mid) if d.get("element")}
         skills = {d.get("skill") for lst in gamedoors.load().values() for d in lst if d.get("skill")}
         with self._lock: els = dict(self.elements)
-        order = sorted((e for e in els if e not in known and e in pos and els[e].get("skill")), key=lambda e: (els[e]["skill"] not in skills, e))
+        # only skills already seen on real doors: other elements are resources (a harvest locks the character until it ends), workshops, zaaps...
+        order = sorted((e for e in els if e not in known and e in pos and els[e].get("skill") in skills))
         for e in order:
             for c in gamemaps.stand_candidates(m, pos[e], max_cells):
                 tried = knowledge.load(self.PROBE_FILE, {}).get(str(mid), {}).get(str(e), [])
@@ -457,8 +465,53 @@ class Session:
                 self.log("info", f"Découverte de porte : élément {e} (compétence {els[e]['skill']}) depuis la case {c}")
                 try: self._do_use(e, c)
                 except RuntimeError as err:
-                    self.log("info", f"  sans effet : {err}"); continue
+                    self.log("info", f"  sans effet : {err}"); self._unlock_after_use(c); continue
                 return True
+        return False
+
+    def _unlock_after_use(self, near):
+        """A wrong use leaves the server waiting (ity): the first move afterwards is swallowed. Send a throw-away step, then give it a second."""
+        for _ in range(2):
+            try:
+                m = self.mapdata(); x, y = gamemaps.to_xy(self.my_cell)
+                n = next((c for dx, dy in gamemaps.DIRS for c in [gamemaps.from_xy(x + dx, y + dy)] if c is not None and gamemaps.walkable(m, c)), None)
+                if n is not None: self._walk([self.my_cell, n]); break
+            except RuntimeError: time.sleep(1.2)
+        time.sleep(0.8)
+
+    def use_recorded(self, oid, until):
+        """Replay the element uses learned from a real session for objective `oid` (knowledge/element_uses.json). -> True when done."""
+        rec = knowledge.load("element_uses.json", {}).get(str(oid))
+        if not rec or rec.get("map") != self.map_id: return False
+        for st in rec["steps"]:
+            self.log("info", f"Objectif : élément {st['element']} depuis la case {st['stand']} (appris)")
+            try: done = self._do_use(st["element"], st["stand"], until)
+            except RuntimeError as err: self.log("info", f"  sans effet : {err}"); return False
+            if done: return True
+            if st.get("kiq"): self._send("kiq"); time.sleep(1.0)
+        return bool(until())
+
+    def use_for_objective(self, words, until, max_cells=6):
+        """Quest objective that wants an interactive element used (a book to read...), no element id given: try the elements of the map
+        whose model name matches one of `words` first, then the others, each from the cells where its use-cell is predicted, until the
+        objective is done. Door-like results (map change) are learned as usual. -> True when `until()` became true."""
+        m = self.mapdata(); mid = self.map_id
+        if not m: return False
+        pos = gamemaps.element_positions(mid)
+        known = {d["element"] for d in gamedoors.from_map(mid) if d.get("element")}
+        with self._lock: els = {k: dict(v) for k, v in self.elements.items()}
+        def name(e): return (gamedata.get("interactives", els[e]["interactive"]) or "") if els[e].get("interactive") is not None else ""
+        # a named element that matches no word of the objective is a resource / workshop / zaap: never touched (harvesting locks the character)
+        order = sorted((e for e in els if e not in known and els[e].get("skill") and (not name(e) or any(w in name(e).lower() for w in words))),
+                       key=lambda e: (not name(e), e))
+        for e in order:
+            cells = [None] + (gamemaps.stand_candidates(m, pos[e], max_cells, 260) if e in pos else [])
+            for c in cells:
+                self.log("info", f"Objectif : utilisation de l'élément {e} « {name(e) or '?'} » depuis la case {c if c is not None else 'actuelle'}")
+                try:
+                    if self._do_use(e, c, until): return True
+                except RuntimeError as err: self.log("info", f"  sans effet : {err}")
+                if self.map_id != mid: return False      # it was a door: the caller travels back
         return False
 
     def _note_arrival(self, cell):

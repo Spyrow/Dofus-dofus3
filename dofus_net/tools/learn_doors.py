@@ -8,7 +8,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(os.path.dirname(HERE), "client"))
 import decode_pcap as d
 from scan_connect import find_tool
-import gamedoors
+import gamedoors, knowledge
 from wire import parse, dec_varint
 from collections import Counter
 
@@ -61,6 +61,23 @@ def passages(msgs):
     return found
 
 
+def uses(msgs):
+    """Objectives completed by using elements: a server `ibg {1: objective}` within 4 s after a client `itz` that did not change the map.
+    The whole chain of such itz since the last map change is kept (a first element may open an interface that is closed with `kiq`).
+    -> [(objective, map, [{element, skill, stand, kiq}, ...])]"""
+    found, cur, chain = [], None, []
+    for i, (t, k, n, b) in enumerate(msgs):
+        if k == "S" and n == "jow": cur, chain = vi(b, 1), []
+        elif k == "C" and n == "itz" and cur:
+            if any(k2 == "S" and n2 == "jow" and t2 - t < 5 for t2, k2, n2, b2 in msgs[i + 1:i + 80]): chain = []; continue
+            stand = next((last_cell(b2) for t2, k2, n2, b2 in reversed(msgs[:i]) if k2 == "C" and n2 == "jok" and t - t2 < 8 and vi(b2, 2) == cur), None)
+            kiq = any(k2 == "C" and n2 == "kiq" and 0 < t2 - t < 6 for t2, k2, n2, b2 in msgs[i + 1:i + 60])
+            chain.append({"element": vi(b, 3), "skill": vi(b, 1), "stand": stand, "kiq": kiq})
+            ibg = next((vi(b2, 1) for t2, k2, n2, b2 in msgs[i + 1:i + 40] if k2 == "S" and n2 == "ibg" and t2 - t < 4), None)
+            if ibg: found.append((ibg, cur, [dict(c) for c in chain])); chain = []
+    return found
+
+
 def steps(msgs):
     """Trigger cells: a client `jok` on the current map followed within 3 s by a server `jow` to another map, with no itz / joc in between."""
     found, cur = [], None
@@ -77,6 +94,12 @@ def main():
     new = total = 0
     for pcap in sys.argv[1:]:
         msgs = messages(pcap)
+        for oid, mp, chain in uses(msgs):
+            total += 1; d = knowledge.load("element_uses.json", {})
+            if d.get(str(oid)) != {"map": mp, "steps": chain}:
+                with knowledge._lock: d[str(oid)] = {"map": mp, "steps": chain}; knowledge.save("element_uses.json", d)
+                new += 1
+            print(f"objective {oid} on map {mp}: " + " -> ".join(f"element {c['element']} from cell {c['stand']}" + (" +kiq" if c["kiq"] else "") for c in chain))
         for frm, cell, to in steps(msgs):
             total += 1; added = gamedoors.record_step(frm, cell, to); new += added
             print(f"{'+' if added else '='} map {frm} --[walk onto cell {cell}]--> map {to}")

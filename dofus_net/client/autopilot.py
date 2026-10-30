@@ -12,6 +12,7 @@ import gamedata, gamedoors, gamequests, guide, knowledge, questbook, store
 GRAPH_PATH = os.path.join(os.path.dirname(store.PATH), "mapgraph.json")
 SIDES = ("top", "bottom", "left", "right")
 TALK_TYPES = {1, 9}
+USE_TYPES = {0, 8}                  # "read the book", "use ...": an interactive element of the objective's map
 FIGHT_TYPES = {6, 7, 13, 14, 16}
 MAX_ATTEMPTS = 3
 FIGHT_REPLY = re.compile(r"combat|affront|battr|d[ée]fi|attaqu|[ée]prouve|provoqu", re.I)   # replies that start a boss fight
@@ -157,10 +158,10 @@ class Autopilot:
             for oid, active in objs.items():
                 if not active: continue
                 o = gamedata.quest_data("objectives", oid) or {}
-                kind = "talk" if o.get("type") in TALK_TYPES else "fight" if o.get("type") in FIGHT_TYPES else None
+                kind = "talk" if o.get("type") in TALK_TYPES | USE_TYPES else "fight" if o.get("type") in FIGHT_TYPES else None
                 if kind and kind not in self.kinds: continue
                 text = gamequests.objective_text(oid)
-                if o.get("type") in TALK_TYPES and o.get("map"):
+                if o.get("type") in TALK_TYPES | USE_TYPES and o.get("map"):
                     if self.attempts[oid] >= MAX_ATTEMPTS: unsupported = unsupported or f"objectif « {text} » : échec après {MAX_ATTEMPTS} essais"
                     elif self.s.map_id != int(o["map"]) and route(self.s.map_id, int(o["map"])) is None and not self._can_discover(int(o["map"])):
                         unsupported = unsupported or f"objectif « {text} » : aucune route connue (porte non apprise ?)"; continue
@@ -301,8 +302,27 @@ class Autopilot:
         self.say("warn", "recherche de monstres abandonnée (trop de cartes visitées)"); return False
 
     # ---- one objective: travel, talk, answer ----
+    def _use_objective(self, qid, oid, target):
+        text = gamequests.objective_text(oid); self.goal = f"{text} (carte {target})"
+        self.attempts[oid] += 1
+        self.say("info", f"objectif : {self.goal} — essai {self.attempts[oid]}/{MAX_ATTEMPTS}")
+        if self.s.map_id != target and route(self.s.map_id, target) is None and not self._discover(target): return False
+        if not self._travel(target): return False
+        time.sleep(2.0)
+        words = [w for w in re.findall(r"[a-zéèêàç]{4,}", text.lower()) if w not in ("lire", "utiliser", "contant", "légende", "dans", "avec")]
+        done = lambda: not self.s.quests.get(qid, (None, {}))[1].get(oid, False)
+        try: ok = self.s.use_recorded(oid, done) or self.s.use_for_objective(words, done)
+        except RuntimeError as e: self.say("warn", f"utilisation impossible : {e}"); return self.attempts[oid] < MAX_ATTEMPTS
+        if not ok:
+            try: self.s.sync_quests()
+            except Exception: pass
+            ok = done()
+        if ok: self.say("info", "objectif accompli"); return True
+        self.say("warn", "objectif non validé après l'essai des éléments de la carte"); return self.attempts[oid] < MAX_ATTEMPTS
+
     def _objective(self, qid, oid):
         o = gamedata.quest_data("objectives", oid); npc_id, target = int(o["p"][0]), int(o["map"])
+        if o.get("type") in USE_TYPES: return self._use_objective(qid, oid, target)
         self.goal = f"{gamequests.objective_text(oid)} (carte {target})"
         self.attempts[oid] += 1
         self.say("info", f"objectif : {self.goal} — essai {self.attempts[oid]}/{MAX_ATTEMPTS}")
