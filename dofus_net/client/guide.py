@@ -20,6 +20,7 @@ SYSTEM_HINT = ("Tu es expert de Dofus Unity (Dofus 3, la version Unity du MMORPG
                "Un bot est bloqué sur un objectif d'une quête précise. On te donne le nom EXACT de la quête, son niveau, l'étape en cours (nom et description), "
                "l'objectif et la position actuelle du bot. Réponds avec précision pour CETTE quête de Dofus Unity (pas une autre quête au nom proche, pas Dofus 2 "
                "si c'est différent): la sous-zone et les coordonnées [x, y] de la carte où agir, et le nom exact du PNJ ou de l'élément à utiliser. "
+               "Si « guide_de_la_quête » est fourni (soluce du site dofuspourlesnoobs.com), appuie-toi dessus en priorité pour l'étape correspondant à l'objectif. "
                "N'invente rien: si tu n'es pas sûr d'une information, mets null. "
                "Réponds uniquement par un objet JSON: {\"subarea\": <nom de la sous-zone ou null>, \"x\": <entier ou null>, \"y\": <entier ou null>, "
                "\"npc\": <nom ou null>, \"why\": \"<explication courte en français>\"}.")
@@ -69,12 +70,13 @@ def plan(state, instruction=None):
     return actions, str(out.get("why") or "")[:240]
 
 
-def quest_hint(quest, objective, position, level=None, step=None, step_desc=None):
+def quest_hint(quest, objective, position, level=None, step=None, step_desc=None, walkthrough=None):
     """What Groq knows about where to solve a quest objective -> ({subarea, x, y, npc, why} or {} if it knows nothing, error or None).
     Coordinates are checked later against the real maps; here they are only normalised."""
     if not available(): return {}, "clé Groq non configurée"
     user = json.dumps({"jeu": "Dofus Unity (Dofus 3)", "nom_exact_de_la_quête": quest, "niveau_de_la_quête": level, "étape_en_cours": step,
-                       "description_de_l_étape": step_desc, "objectif": objective, "position_actuelle_du_bot": position}, ensure_ascii=False)
+                       "description_de_l_étape": step_desc, "objectif": objective, "position_actuelle_du_bot": position,
+                       "guide_de_la_quête": walkthrough}, ensure_ascii=False)
     try: out = groq.chat_json(SYSTEM_HINT, user, max_tokens=250)
     except groq.GroqError as e: return {}, str(e)
     def num(v):

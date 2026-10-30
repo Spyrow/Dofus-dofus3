@@ -55,6 +55,24 @@ def characteristics(body):
     return out
 
 
+def base_characteristics(body):
+    """KRG body -> {characteristic id: base value} : sub-field 7 only (sub-field 5 holds the equipment bonus, e.g. Force 47 from items).
+    The unspent capital points (id 3) live in sub-field 7 too."""
+    out = {}
+    for f, inner in parse(body):
+        if f != 1: continue
+        for f2, entry in parse(inner):
+            if f2 != 1: continue
+            cid, val = 0, 0
+            for f3, v in parse(entry):
+                if f3 == 2 and isinstance(v, int): cid = v
+                elif f3 == 5 and isinstance(v, bytes) and v:
+                    try: val = next((_signed(x) for g, x in parse(v) if g == 7 and isinstance(x, int)), 0)
+                    except (ValueError, IndexError): val = 0
+            out[cid] = val
+    return out
+
+
 def selection(body):
     """KSC body -> (character id, name) or (None, None)."""
     try:
@@ -164,7 +182,7 @@ def _characteristic_groups(stats):
 
 def snapshot(messages, host=None):
     """messages: iterable of (type name, body). The LAST krg wins (the server re-sends it after entering the map)."""
-    cid = name = stats = job_list = None
+    cid = name = stats = job_list = None; job_xp = {}
     items = {}; map_ids = []; breed = None; spell_slots = None
     for t, body in messages:
         try:
@@ -173,6 +191,10 @@ def snapshot(messages, host=None):
             elif t in (IRL, IQX):
                 for it in inventory_items(body): items[it["uid"] if it["uid"] is not None else len(items)] = it
             elif t == IPE: job_list = jobs(body)
+            elif t == "ipz":      # experience of a job (harvest / craft); the latest per job wins
+                import gamejobs
+                x = gamejobs.job_xp(body)
+                if x: job_xp[x["job"]] = x
             elif t == ISM:
                 sl = shortcut_spells(body)
                 if sl: spell_slots = sl
@@ -198,5 +220,14 @@ def snapshot(messages, host=None):
     elif map_ids: snap["position"] = {"map_id": map_ids[-1]}
     if spell_slots: snap["spells"] = [_spell_view(sid) for _slot, sid in sorted(spell_slots)]
     if job_list:
-        snap["jobs"] = [{"name": gamedata.get("jobs", j) or f"Métier #{j}", "level": lvl} for j, lvl in job_list if j != BASE_JOB]
+        import gamejobs
+        def job_view(j, lvl):
+            v = {"name": gamedata.get("jobs", j) or f"Métier #{j}", "level": lvl}
+            x = job_xp.get(j)
+            if x:
+                v["level"] = gamejobs.level_of(x["floor"], lvl)
+                v.update(xp=x["xp"], xp_floor=x["floor"], xp_next=x["next"])
+                if x["next"] and x["next"] > x["floor"]: v["xp_pct"] = round(100 * (x["xp"] - x["floor"]) / (x["next"] - x["floor"]))
+            return v
+        snap["jobs"] = [job_view(j, lvl) for j, lvl in job_list if j != BASE_JOB]
     return snap

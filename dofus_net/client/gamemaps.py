@@ -58,7 +58,8 @@ def load(map_id):
     path = os.path.join(CACHE_DIR, f"{map_id}.json")
     try:
         with open(path, encoding="utf8") as f: m = json.load(f)
-    except (OSError, ValueError):
+        if m and len(m["cells"][0]) < 6: raise ValueError("cache without zones")      # cached before linkedZone / moveZone / altitude were read
+    except (OSError, ValueError, KeyError, IndexError):
         m = _read_bundle(map_id)
         if m:
             os.makedirs(CACHE_DIR, exist_ok=True)
@@ -96,6 +97,35 @@ def element_positions(map_id):
     return out
 
 
+def element_cells(map_id):
+    """-> {interactive element id: cell} for the elements the bundle gives a cellId (resources: confirmed against the itw message of a
+    harvest; workshops and doors have none); {} when unknown. Cached next to the cell data."""
+    map_id = int(map_id); path = os.path.join(CACHE_DIR, f"{map_id}.cells.json")
+    try:
+        with open(path, encoding="utf8") as f: return {int(k): v for k, v in json.load(f).items()}
+    except (OSError, ValueError): pass
+    global _index
+    if _index is None:
+        try:
+            with open(INDEX_PATH, encoding="utf8") as f: _index = json.load(f)
+        except (OSError, ValueError): _index = {}
+    bundle, game = (_index or {}).get(str(map_id)), _game_dir()
+    if not bundle or not game: return {}
+    import warnings; warnings.filterwarnings("ignore")
+    import UnityPy
+    UnityPy.config.FALLBACK_UNITY_VERSION = "6000.3.16f1"
+    env = UnityPy.load(os.path.join(game, "Dofus_Data", "StreamingAssets", "Content", "Map", "Data", bundle))
+    out = {}
+    for o in env.objects:
+        if o.type.name != "MonoBehaviour" or o.peek_name() != f"map_{map_id}": continue
+        for r in o.read_typetree()["references"]["RefIds"]:
+            d = r.get("data") or {}; e = d.get("<interactiveId>k__BackingField"); c = d.get("cellId")
+            if e and isinstance(c, int) and c >= 0: out[e] = c
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(path, "w", encoding="utf8") as f: json.dump({str(k): v for k, v in out.items()}, f)
+    return out
+
+
 def cell_center(cell):
     """Pixel centre of a cell (cells are 86 x 43 px diamonds, rows 21.5 px apart)."""
     r, k = divmod(cell, 14)
@@ -103,14 +133,16 @@ def cell_center(cell):
 
 
 def stand_candidates(m, pos, limit=8, reach=150):
-    """Walkable cells most likely to be the use-cell of an element at pixel `pos`. Measured on learned doors: the use-cell centre is about
-    (x + 575, 545 - y) px from the element (+-1.5 cells), so the nearest walkable cells to that point come first."""
-    tx, ty = pos[0] + 575, 545 - pos[1]; out = []
-    for c in range(CELLS):
-        if not walkable(m, c): continue
-        cx, cy = cell_center(c); d = ((cx - tx) ** 2 + (cy - ty) ** 2) ** 0.5
-        if d <= reach: out.append((d, c))
-    return [c for _d, c in sorted(out)][:limit]
+    """Walkable cells most likely to be the use-cell of an element at pixel `pos` (static elements have no cell in the map data). Skills are used
+    from a direct neighbour (distance 1) of the element's cell; that cell is estimated at (x + 615.5, 565 - y) px (fitted on 19 uses of the real
+    client, so only a hint: ~13 of them have the real use-cell among the first 3 candidates). Direct neighbours of the estimated cell come first,
+    then the nearest cells by pixel distance."""
+    tx, ty = pos[0] + 615.5, 565.25 - pos[1]
+    cells = [(c, (cell_center(c)[0] - tx) ** 2 + (cell_center(c)[1] - ty) ** 2) for c in range(CELLS) if walkable(m, c)]
+    if not cells: return []
+    est = min(cells, key=lambda t: t[1])[0]; ex, ey = to_xy(est)
+    def direct(c): x, y = to_xy(c); return abs(x - ex) + abs(y - ey) == 1
+    return [c for c, d in sorted(cells, key=lambda t: (not direct(t[0]), t[1])) if d ** 0.5 <= reach + 120 or direct(c)][:limit]
 
 
 def _read_bundle(map_id):
@@ -131,7 +163,7 @@ def _read_bundle(map_id):
         return {"id": map_id,
                 "neighbours": {d: t[k] for d, k in (("top", "topNeighbourId"), ("bottom", "bottomNeighbourId"),
                                                     ("left", "leftNeighbourId"), ("right", "rightNeighbourId"))},
-                "cells": [[c["mov"], c["los"], c["mapChangeData"]] for c in sorted(t["cellsData"], key=lambda c: c["cellNumber"])]}
+                "cells": [[c["mov"], c["los"], c["mapChangeData"], c.get("linkedZone", 0), c.get("moveZone", 0), c.get("altitude", 0)] for c in sorted(t["cellsData"], key=lambda c: c["cellNumber"])]}
     return None
 
 
@@ -150,10 +182,21 @@ def exit_cells(m, side):
     return [i for i, c in enumerate(m["cells"]) if c[0] and (c[2] & mid or (c[2] & d1 and c[2] & d2))]
 
 
+def can_step(m, a, b):
+    """Is the step a -> b (adjacent cells) allowed? A map can hold sunken / raised areas (altitude, linkedZone) joined by a ramp (moveZone = 1 cells):
+    the altitude only changes along the ramp. In the real client's paths (about 330 steps over two captures) every step that changes altitude
+    has both cells on the ramp; the steps the server refuses are the ones that leave a ramp sideways (204 -> 203 on map 154010374, 329 -> 328
+    on map 154010113)."""
+    ca, cb = m["cells"][a], m["cells"][b]
+    if len(ca) < 6 or len(cb) < 6: return True
+    return ca[5] == cb[5] or bool(ca[4] and cb[4])
+
+
 def find_path(m, start, goal, blocked=(), diagonals_only=False):
     """Shortest 8-direction path start -> goal over walkable cells (uniform step cost, small penalty per turn so that paths
     have few corners). diagonals_only=True restricts the steps to the 4 odd directions (1, 3, 5, 7): the only moves allowed in a FIGHT
-    (the server answers `jpc` with code -7 to a straight horizontal / vertical step). -> list of cells including both ends, or None."""
+    (the server answers `jpc` with code -7 to a straight horizontal / vertical step).
+    -> list of cells including both ends, or None."""
     if not (walkable(m, start) and walkable(m, goal)): return None
     if start == goal: return [start]
     blocked = set(blocked); gx, gy = to_xy(goal)
@@ -171,6 +214,7 @@ def find_path(m, start, goal, blocked=(), diagonals_only=False):
         for nd, (dx, dy) in dirs:
             n = from_xy(x + dx, y + dy)
             if n is None or not walkable(m, n) or (n in blocked and n != goal): continue
+            if not can_step(m, cell, n): continue
             ng = g + 1 + (0.01 if d not in (-1, nd) else 0)
             if ng < best.get((n, nd), 1e18):
                 best[(n, nd)] = ng; prev[(n, nd)] = (cell, d)

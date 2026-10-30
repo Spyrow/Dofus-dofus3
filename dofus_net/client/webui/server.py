@@ -175,6 +175,13 @@ class H(BaseHTTPRequestHandler):
             stand = body.get("stand"); stand = int(stand) if isinstance(stand, (int, float)) and 0 <= stand < 560 else None
             err = gamesession.session(m[1]).use_element(n, stand)
             self._json({"error": err} if err else {"ok": True}, 409 if err else 202)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/(harvest|craft)", p):    # {"element": id} / {"item": result item id, "count": n}
+            try:
+                n = int(body.get("element" if m[2] == "harvest" else "item")); count = int(body.get("count") or 1)
+            except (TypeError, ValueError): return self._json({"error": "bad request"}, 400)
+            sess = gamesession.session(m[1])
+            err = sess.harvest(n) if m[2] == "harvest" else sess.craft(n, max(1, min(count, 50)))
+            self._json({"error": err} if err else {"ok": True}, 409 if err else 202)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/boost", p):
             w = body.get("weights") if isinstance(body.get("weights"), dict) else None
             try: s = boost.save_settings(m[1], body.get("auto"), w) if ("auto" in body or w) else boost.load_settings(m[1])

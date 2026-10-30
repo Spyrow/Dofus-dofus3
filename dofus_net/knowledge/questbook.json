@@ -205,24 +205,30 @@
   },
   "1635": {
    "name": "Dans la gueule du Milimilou",
-   "seen": 72,
+   "seen": 187,
    "steps": {
     "2255": {
      "name": "Dans la gueule du Milimilou",
      "objectives": {
-      "9783": "Aller voir Klasmor le fossoyeur"
+      "9783": "Aller voir Klasmor le fossoyeur",
+      "9784": "Pénétrer dans l'antre du Milimilou",
+      "9785": "Vaincre le Milimilou",
+      "9786": "Aller voir Hargnok",
+      "9787": "Retourner voir Fécaline la Sage"
      }
     }
    }
   },
   "1638": {
    "name": "Cryptologie",
-   "seen": 6,
+   "seen": 117,
    "steps": {
     "2258": {
      "name": "Cryptologie",
      "objectives": {
-      "9811": "Découvrir la carte : Salle du tombeau de Kardorim"
+      "9811": "Découvrir la carte : Salle du tombeau de Kardorim",
+      "9812": "Vaincre x1 Kardorim en un seul combat",
+      "9813": "Aller voir Kardorim"
      }
     }
    }
@@ -243,7 +249,7 @@
   },
   "1640": {
    "name": "Des vestiges de légende",
-   "seen": 68,
+   "seen": 88,
    "steps": {
     "2260": {
      "name": "Des vestiges de légende",
@@ -254,6 +260,22 @@
       "9820": "Examiner la stèle d'un vestige dans les pâturages",
       "9821": "Examiner la stèle d'un vestige dans la forêt",
       "9822": "Retourner voir Ternette Nhin"
+     }
+    }
+   }
+  },
+  "1641": {
+   "name": "Vu du ciel",
+   "seen": 145,
+   "steps": {
+    "2261": {
+     "name": "Vu du ciel",
+     "objectives": {
+      "9823": "Aller voir Matu Vuh",
+      "9824": "Utiliser la longue-vue de Matu Vuh",
+      "9825": "Aller voir Galilea",
+      "9826": "Utiliser la longue-vue de Galilea",
+      "9827": "Retourner voir Ternette Nhin"
      }
     }
    }
@@ -350,7 +372,7 @@
   },
   "1648": {
    "name": "Des chafers qui marchent",
-   "seen": 175,
+   "seen": 341,
    "steps": {
     "2268": {
      "name": "Des chafers qui marchent",
@@ -366,27 +388,56 @@
   },
   "1649": {
    "name": "Produits naturels",
-   "seen": 238,
+   "seen": 254,
    "steps": {
     "2269": {
      "name": "Produits naturels",
      "objectives": {
       "9863": "Fabriquer 1 Pain d'Incarnam et fermer l'interface",
       "9864": "Fabriquer 1 Goujon en Tranche et fermer l'interface",
-      "9866": "Fabriquer 1 Potion de Mini Soin et fermer l'interface"
+      "9866": "Fabriquer 1 Potion de Mini Soin et fermer l'interface",
+      "9867": "Montrer à Berb Nhin : 1 Pain d'Incarnam",
+      "9868": "Montrer à Berb Nhin : 1 Goujon en Tranche",
+      "9870": "Montrer à Berb Nhin : 1 Potion de Mini Soin"
      }
     }
    }
   },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 238,
+   "seen": 404,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",
      "objectives": {
       "13849": "Entrer dans la Tour du Conseil d'Astrub",
       "14257": "Aller voir Envoyée des Douze"
+     }
+    }
+   }
+  },
+  "2004": {
+   "name": "Destination Astrub",
+   "seen": 46,
+   "steps": {
+    "2611": {
+     "name": "Destination Astrub",
+     "objectives": {
+      "13767": "Aller voir Maître Anemo",
+      "13768": "Aller voir Envoyée des Douze",
+      "13931": "Utiliser le portail pour se rendre à Astrub sur le Monde des Douze"
+     }
+    }
+   }
+  },
+  "2512": {
+   "name": "Le métier des aventuriers",
+   "seen": 151,
+   "steps": {
+    "3193": {
+     "name": "Le métier des aventuriers",
+     "objectives": {
+      "19260": "Fabriquer 1 Bouillon de Chair et fermer l'interface"
      }
     }
    }
@@ -405,6 +456,35 @@
     25038
    ],
    "qid": 1632
+  },
+  "9811": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793363663,
+   "map": 152834048,
+   "monsters": [
+    4046,
+    4047,
+    4048,
+    4049,
+    4050
+   ],
+   "qid": 1638
+  },
+  "9812": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793375051,
+   "map": 152835072,
+   "monsters": [
+    4046,
+    4047,
+    4048,
+    4049,
+    4050,
+    4051
+   ],
+   "qid": 1638
   },
   "9828": {
    "count": 1,

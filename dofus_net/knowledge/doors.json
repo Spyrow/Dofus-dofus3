@@ -145,7 +145,7 @@
    "element": 489332,
    "cell": null,
    "to": 153354246,
-   "stand": 329
+   "stand": 300
   }
  ],
  "153355268": [
@@ -165,6 +165,13 @@
    "cell": null,
    "to": 153355268,
    "stand": 329
+  },
+  {
+   "skill": 14094,
+   "element": 489686,
+   "cell": null,
+   "to": 154010882,
+   "stand": 210
   }
  ],
  "154010882": [
@@ -173,25 +180,24 @@
    "element": 489331,
    "cell": null,
    "to": 153355270,
-   "stand": 214
+   "stand": 201
   }
  ],
  "153355270": [
-  {
-   "kind": "step",
-   "guess": true,
-   "element": null,
-   "skill": null,
-   "cell": 401,
-   "to": 154010882,
-   "stand": null
-  },
   {
    "skill": 19012,
    "element": 504678,
    "cell": null,
    "to": 154010882,
    "stand": 415
+  },
+  {
+   "kind": "step",
+   "element": null,
+   "skill": null,
+   "cell": 415,
+   "to": 154010882,
+   "stand": null
   }
  ],
  "152829952": [
@@ -235,6 +241,169 @@
    "skill": null,
    "cell": 381,
    "to": 152830976,
+   "stand": null
+  }
+ ],
+ "152832000": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 452,
+   "to": 152830980,
+   "stand": null
+  }
+ ],
+ "152832004": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 440,
+   "to": 152832000,
+   "stand": null
+  }
+ ],
+ "152833024": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 466,
+   "to": 152832004,
+   "stand": null
+  },
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 452,
+   "to": 152833028,
+   "stand": null
+  }
+ ],
+ "152833028": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 482,
+   "to": 152833024,
+   "stand": null
+  }
+ ],
+ "152834048": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 397,
+   "to": 152833028,
+   "stand": null
+  },
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 397,
+   "to": 152834052,
+   "stand": null
+  },
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 397,
+   "to": 153881600,
+   "stand": null
+  }
+ ],
+ "152834052": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 332,
+   "to": 152834048,
+   "stand": null
+  }
+ ],
+ "154010372": [
+  {
+   "skill": 14049,
+   "element": 489326,
+   "cell": null,
+   "to": 153354242,
+   "stand": 288
+  }
+ ],
+ "153354242": [
+  {
+   "kind": "step",
+   "element": null,
+   "skill": null,
+   "cell": 424,
+   "to": 154010372,
+   "stand": null
+  }
+ ],
+ "154010883": [
+  {
+   "skill": 17515,
+   "element": 489503,
+   "cell": null,
+   "to": 241445377,
+   "stand": null
+  }
+ ],
+ "152835072": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 397,
+   "to": 152834052,
+   "stand": null
+  }
+ ],
+ "152836096": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 303,
+   "to": 152835072,
+   "stand": null
+  },
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 300,
+   "to": 152836100,
+   "stand": null
+  }
+ ],
+ "152836100": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 373,
+   "to": 152836096,
    "stand": null
   }
  ]

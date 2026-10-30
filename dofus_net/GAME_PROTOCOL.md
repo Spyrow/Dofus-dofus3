@@ -94,3 +94,34 @@ Le panneau de succès fait `mdm{onglet}` -> `mdo` (liste de succès) : ce ne son
 
 ## Données statiques (`tools/export_gamedata.py`)
 Bundles Unity `Dofus_Data/StreamingAssets/Content/Data/*.asset.bundle` + textes `Content/I18n/<lang>.bin` (index u32 id/offset, chaînes varint+UTF-8).
+
+## Métiers : récolte, fabrication, XP (`client/gamejobs.py`, capture du 2026-10-30)
+- **Récolte** : marcher à côté de la ressource (sa case = `cellId` de l'élément dans le bundle de carte, = `itw.4`), puis `itz {1: compétence, 3: élément}`.
+  Réponses : `itw {1: {3: élément, 4: case, 5: 2}}`, `itx`, `itv {1: élément, 4: acteur, 5: durée}` ; environ 3 s plus tard `itt {1: élément}` (fin),
+  `isz {2: quantité, 3: objet}` (butin), `irx {3: {1: nouvelle quantité de la pile, 3: uid}}`, `ipz` (XP), `itw {.. 5: 1}`. Un élément indisponible ne répond rien.
+- **Fabrication** : `itz` sur l'atelier (depuis la bonne case, comme une porte) -> `jyz {1: compétence de la recette}` + `irl` ; `kar {1: objet à fabriquer}` -> `kch`
+  (le serveur pose les ingrédients) ; `kba {1: 1, 2: 1}` -> `kco {2: {4: objet créé}}`, `irx`, `ipz`, `ipa` ; fermer l'interface = `kiq` x2 -> `kbr`.
+  La compétence de la recette est `skillId` de `data_assets_recipesdataroot.asset.bundle` (23 potion, 135 poisson, 27 pain).
+- **XP des métiers** : `ipz {1: {1: source (2 récolte, 3 fabrication), 2: XP, 3: XP au début du niveau, 5: id métier, 6: XP du niveau suivant}}` ;
+  niveau n+1 commence à 10·n·(n+1) XP (20, 60, 120...). L'XP et le niveau s'affichent dans l'onglet Métiers.
+- Objectif de quête type 17 « Fabriquer #2 #1 et fermer l'interface » : `p = [objet, quantité, 0]`, `map` = carte de l'atelier. L'autopilote récolte ce qui manque
+  (ressource = élément dont le nom est celui de l'ingrédient), va à l'atelier du métier (nom « Atelier des <métier> ») et fabrique.
+- Non vérifié en direct : `kba` (le sens exact de ses deux champs), la récolte du Blé (même mécanisme, compétence lue dans `jnj`), l'atelier du Pain.
+
+## Déplacements : relief, rampes (`gamemaps.can_step`) — vérifié sur ~330 pas du vrai client et sur les refus du serveur
+- Les cases ont `altitude`, `linkedZone`, `moveZone` en plus de `mov / los / mapChangeData` (le cache `mapcells/*.json` garde 6 valeurs par case).
+- L'altitude ne change que le long d'une rampe : un pas entre deux altitudes différentes n'est permis que si les DEUX cases ont `moveZone = 1`.
+  Sinon le serveur répond `jpc {2: compteur, 3: code}` (codes vus : -11, 2) et ignore tout le trajet. Couper un coin en diagonale est permis.
+- Un trajet refusé est rejoué case par case (`Session._walk_stepwise`) ; une case refusée est mémorisée dans `knowledge/bad_cells.json`.
+- Après l'examen d'un objet qui ouvre une interface (longue-vue), le premier déplacement est avalé : envoyer `kiq` avant.
+
+## Éléments : compétences (`data_assets_skillsdataroot.asset.bundle`, `gamejobs.skills()`)
+- Le `type` d'un élément `jnj` est un id de compétence : `gatheredRessourceItem` = objet récolté (Blé 289 <- types 45 / 296), `craftableItemIds` = objets
+  fabriqués (four 27 -> Pain d'Incarnam 468), `range` = distance d'utilisation (1 = voisin direct dans la grille de jeu ; 10 pour la pêche).
+- Les éléments statiques (portes, ateliers) n'ont pas de case dans la carte, seulement une position en pixels ; seuls les éléments animés ont un `cellId`
+  (case = (x + 623,5 ; 505,25 - y) px). La case d'utilisation se prédit mal (~13 cas sur 19 dans les 3 premières) : on mémorise celles qui ont marché.
+
+## Combat contre un boss (`fightbot._kite_turn`)
+- `juo` / `jwj` donnent pour chaque combattant le modèle (3.4.6.3.3), la vie (3.4.7.4, stat sans id) et les PM (stat 23) : Kardorim 140 PV / 4 PM, chafer 54 PV / 3 PM.
+- Tactique (Sacrieur) quand il y a 4 ennemis ou plus : Mutilation une fois par combat, Stase (1-5 cases) sur le boss ou l'ennemi le plus proche à portée,
+  puis fuite avec les PM restants vers la case la moins menacée. Kardorim vaincu ainsi au premier essai.
