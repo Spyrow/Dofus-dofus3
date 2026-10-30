@@ -63,13 +63,15 @@ async function api(path,method="GET",body){
 let accts=[],sel=null,tab="fiche",invQ="";
 try{sel=localStorage.getItem("sel");tab=localStorage.getItem("tab")||"fiche"}catch{}
 
-async function loadList(){
+async function loadList(soft){
   accts=await api("/api/accounts");
   if(!accts.find(a=>a.id===sel))sel=accts[0]?.id||null;
   $("#list").innerHTML=accts.map(a=>`<div class="acc ${a.id===sel?"sel":""}" data-id="${esc(a.id)}"><div>${esc(a.label)}<small>${a.demo?"exemple":"MAJ jeton : "+fmt(a.refreshed)}</small>${a.demo?"":`<small class="ss"><span class="dot ${a.session||"disconnected"}"></span>${STL[a.session||"disconnected"]}</small>`}</div></div>`).join("");
   document.querySelectorAll(".acc").forEach(e=>e.onclick=()=>{sel=e.dataset.id;try{localStorage.setItem("sel",sel)}catch{};loadList()});
+  if(soft&&LIVE_TABS.has(tab)&&$("#char .tabs"))return;   // live tabs (journal, map, quests...) poll by themselves: re-rendering them on every disk change made the console jump
   render();
 }
+const LIVE_TABS=new Set(["console","map","quests","combat"]);
 
 async function render(){
   const a=accts.find(x=>x.id===sel),m=$("#main");
@@ -471,7 +473,7 @@ function initMap(a,d){
 let evT=null;
 try{
   const es=new EventSource("/api/events");   // live: reload when accounts or character snapshots change on disk
-  es.onmessage=e=>{if(e.data!=="changed")return;clearTimeout(evT);evT=setTimeout(()=>loadList().catch(()=>{}),150)};
+  es.onmessage=e=>{if(e.data!=="changed")return;clearTimeout(evT);evT=setTimeout(()=>loadList(true).catch(()=>{}),150)};
 }catch{}
 loadList().catch(e=>$("#main").innerHTML=`<p class="err">${esc(e.message)}</p>`);
 </script></body></html>
