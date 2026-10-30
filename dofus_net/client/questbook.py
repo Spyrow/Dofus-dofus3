@@ -29,6 +29,17 @@ def observe(qid, step_id, objectives, name=None, step_name=None, texts=None):
         knowledge.save(FILE, b)
 
 
+def get_hint(oid):
+    """Groq hint remembered for an objective -> {subarea, x, y, npc, why}; {} when Groq had nothing; None when never asked."""
+    return _book().setdefault("hints", {}).get(str(oid))
+
+
+def record_hint(oid, qid, hint):
+    with knowledge._lock:
+        b = _book(); b.setdefault("hints", {})[str(oid)] = dict(hint, qid=qid, last=int(time.time()))
+        knowledge.save(FILE, b)
+
+
 def record_dialog(npc, map_id, path, completed, active):
     """A dialog ended. completed = [(qid, oid)] validated within a few seconds; active = objective ids that were open."""
     if not npc or not path: return

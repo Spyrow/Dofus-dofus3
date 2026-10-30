@@ -302,6 +302,7 @@ async function initBoost(a){
 
 // ---- Quests and dialogs ----
 let qSig="";
+function guideLlmEnabled(id){try{return localStorage.getItem(`guideLlm:${id}`)==="true"}catch{return false}}
 async function refreshQuests(a){
   const box=$("#qv");if(!box)return;
   if(a.demo){box.innerHTML='<div class="card"><h2>Quêtes</h2><p class="msg">Le compte de démonstration n\'a pas de quêtes en direct.</p></div>';return}
@@ -309,12 +310,21 @@ async function refreshQuests(a){
   const sig=JSON.stringify(v);if(sig===qSig&&box.firstChild)return;qSig=sig;
   if(document.activeElement&&/^g(key|txt)$/.test(document.activeElement.id))return;   // do not wipe what is being typed
   const d=v.dialog,off=!v.live;
+  let selectedQuest=v.auto.quest_id;
+  if(selectedQuest===null||selectedQuest===undefined){try{selectedQuest=localStorage.getItem(`autopilotQuest:${a.id}`)||""}catch{selectedQuest=""}}
+  if(selectedQuest!==""&&!v.quests.some(q=>String(q.id)===String(selectedQuest)))selectedQuest="";
   let qb=null;try{qb=await api("/api/questbook")}catch{}
   let gq={configured:false};try{gq=await api("/api/groq")}catch{}
   box.innerHTML=
    `<div class="card"><h2>Autopilote de quêtes <span class="badge ${v.auto.on?"connected":""}">${v.auto.on?"actif":"arrêté"}</span></h2>
      <p class="msg">${v.auto.on?esc(v.auto.goal||"…"):"Voyage jusqu'au PNJ de l'objectif, lui parle et répond au dialogue. S'arrête sur un combat, un objectif non géré ou un échec (voir la Console)."}</p>
-     <p><label><input type="checkbox" id="gllm" style="width:auto" ${gq.configured?"":"disabled"}> Utiliser le guide IA (Groq) pour les réponses inconnues et quand l'autopilote est bloqué</label></p>
+     <p><label>Quête ciblée :
+       <select id="apquest" ${v.auto.on?"disabled":""}><option value="" ${selectedQuest===""?"selected":""}>Toutes les quêtes actives</option>
+         ${v.quests.map(q=>`<option value="${q.id}" ${String(selectedQuest)===String(q.id)?"selected":""}>${esc(q.name)}</option>`).join("")}
+       </select>
+     </label></p>
+     <p><label><input type="checkbox" id="gllm" style="width:auto" ${guideLlmEnabled(a.id)?"checked":""} ${gq.configured?"":"disabled"}> Utiliser le guide IA (Groq) pour les réponses inconnues, et quand une quête bloque l'autopilote (Groq cherche où aller)</label></p>
+     ${selectedQuest!==""?'<p class="hint">En mode ciblé, l’autopilote ignore les autres quêtes et le guide Groq est désactivé.</p>':""}
      <button class="${v.auto.on?"d":"p"}" id="apbtn" ${v.live?"":"disabled"}>${v.auto.on?"Arrêter l'autopilote":"Lancer l'autopilote"}</button></div>
     <div class="card"><h2>Guide IA (Groq) <span class="badge ${gq.configured?"connected":""}">${gq.configured?"configuré · "+esc(gq.model):"non configuré"}</span></h2>
      <p class="hint">Le guide propose, le bot vérifie : il ne peut utiliser que des PNJ, éléments, sorties et groupes réellement présents. Sont envoyés à Groq : textes de quêtes et de dialogues, noms de cartes, de PNJ et d'éléments. Jamais de jeton, d'e-mail ni de nom de compte ou de personnage.</p>
@@ -330,7 +340,9 @@ async function refreshQuests(a){
     <div class="card"><h2>Quêtes en cours <span class="msg">· ${v.quests.length}</span></h2>${v.quests.map(q=>`<div style="margin:12px 0"><b>${esc(q.name)}</b>
       ${q.desc?`<div class="stats">${esc(q.desc)}</div>`:""}
       ${q.objectives.map(o=>`<div class="row"><span>${o.active?"○":"✓"} ${esc(o.text)}</span><span class="msg">${esc(o.where||"")}</span></div>`).join("")}</div>`).join("")||'<p class="msg">Aucune quête (connecte le personnage).</p>'}</div>`;
-  const ap=$("#apbtn");if(ap)ap.onclick=()=>questAct(a,"autopilot",{on:!v.auto.on,llm:!!($("#gllm")&&$("#gllm").checked)});
+  const gllm=$("#gllm");if(gllm)gllm.onchange=()=>{try{localStorage.setItem(`guideLlm:${a.id}`,String(gllm.checked))}catch{}};
+  const apq=$("#apquest");if(apq)apq.onchange=()=>{try{localStorage.setItem(`autopilotQuest:${a.id}`,apq.value)}catch{}};
+  const ap=$("#apbtn");if(ap)ap.onclick=()=>{const selected=$("#apquest")&&$("#apquest").value;questAct(a,"autopilot",{on:!v.auto.on,llm:!!($("#gllm")&&$("#gllm").checked),quest_id:selected?Number(selected):null})};
   const gs=$("#gsave");if(gs)gs.onclick=async()=>{const k=$("#gkey").value.trim();if(!k)return;try{await api("/api/groq","POST",{api_key:k});$("#gkey").value="";qSig=""}catch(e){alert(e.message)}refreshQuests(a)};
   const ga=$("#gask");if(ga)ga.onclick=()=>{const t=$("#gtxt").value.trim();if(t)questAct(a,"guide",{text:t})};
   box.querySelectorAll("[data-atk]").forEach(b=>b.onclick=()=>{if(confirm("Attaquer ce groupe ? Le combat est joué automatiquement."))questAct(a,"attack",{actor:+b.dataset.atk})});

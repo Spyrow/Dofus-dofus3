@@ -157,7 +157,11 @@ class H(BaseHTTPRequestHandler):
         elif m := re.fullmatch(r"/api/accounts/(\w+)/autopilot", p):
             sess = gamesession.session(m[1])
             if body.get("on"):
-                if not sess.auto.start(body.get("kinds") if isinstance(body.get("kinds"), list) else None, bool(body.get("llm"))): return self._json({"error": "impossible : personnage non connecté ou autopilote déjà actif"}, 409)
+                quest_id = body.get("quest_id")
+                if quest_id is not None and type(quest_id) is not int:
+                    return self._json({"error": "identifiant de quête invalide"}, 400)
+                if not sess.auto.start(body.get("kinds") if isinstance(body.get("kinds"), list) else None, bool(body.get("llm")), quest_id):
+                    return self._json({"error": "impossible : personnage non connecté, autopilote déjà actif ou quête inactive"}, 409)
             else: sess.auto.stop()
             self._json({"ok": True}, 202)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/attack", p):

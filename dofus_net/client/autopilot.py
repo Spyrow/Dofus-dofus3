@@ -1,12 +1,12 @@
-"""Quest autopilot: picks the next supported quest objective, travels there (map graph), talks to the NPC and answers its dialog.
+"""Quest autopilot: picks supported quest objectives, travels there, uses required elements or talks to the NPC and answers its dialog.
 
-Supported objective types: 1 "Aller voir #1" and 9 "Retourner voir #1" (talk to an NPC on a known map).
+Supported objective types: 0/8 (use an element on a known or text-derived subarea map), 1 "Aller voir #1" and 9 "Retourner voir #1".
 NOT supported (the autopilot stops and says why): fights (type 6, 7, 13, 14, 16: the combat protocol is not implemented), crafting,
 item hand-ins, map discovery, anything whose NPC map is unknown, and map changes that need an interactive element (doors, zaaps).
 It also stops when a fight starts, when the character disconnects, after MAX_ATTEMPTS failed tries on the same objective, or on request.
 
 Travel uses %APPDATA%/dofus_net/mapgraph.json (tools/index_maps.py): {map id: [top, bottom, left, right] neighbour ids}."""
-import collections, json, os, re, threading, time
+import collections, json, os, re, threading, time, unicodedata
 import gamedata, gamedoors, gamequests, guide, knowledge, questbook, store
 
 GRAPH_PATH = os.path.join(os.path.dirname(store.PATH), "mapgraph.json")
@@ -94,16 +94,22 @@ def pick_reply(replies, prefer=None):
 
 class Autopilot:
     def __init__(self, sess):
-        self.s = sess; self.explore = 0; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.kinds = {"talk", "fight"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False; self.fight_played = False
-        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter()
+        self.s = sess; self.explore = 0; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.quest_id = None; self.kinds = {"talk", "fight"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False; self.fight_played = False; self._stuck = []; self._hinted = set()
+        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}
 
     # ---- control ----
-    def start(self, kinds=None, llm=False):
+    def start(self, kinds=None, llm=False, quest_id=None):
         """kinds: subset of {"talk", "fight"} to handle (default both). llm: ask the Groq guide for dialog replies the book does not know,
-        and for the next action when no objective can be handled."""
+        and for the next action when no objective can be handled. quest_id: restrict this run to one active quest."""
         if self.on: return False
-        self.kinds = set(kinds or ("talk", "fight")); self.llm = bool(llm) and guide.available(); self.llm_steps = 0
         if self.s.status != "connected": return False
+        if quest_id is not None:
+            try: quest_id = int(quest_id)
+            except (TypeError, ValueError): return False
+            with self.s._lock:
+                if quest_id not in self.s.quests: return False
+        self.quest_id = quest_id
+        self.kinds = set(kinds or ("talk", "fight")); self.llm = bool(llm) and guide.available(); self.llm_steps = 0; self._hinted = set()
         self.on = True; self.goal = None; self._stop = threading.Event(); self.attempts.clear()
         self._thread = threading.Thread(target=self._run, daemon=True); self._thread.start()
         return True
@@ -145,7 +151,8 @@ class Autopilot:
                     except Exception: pass
                     time.sleep(0.5); obj, why = self._pick()
                 if obj is None:
-                    if self.llm and self.llm_steps < MAX_LLM_STEPS and self._ask_guide(why): continue
+                    if self.llm and self._unblock(): continue
+                    if self.quest_id is None and self.llm and self.llm_steps < MAX_LLM_STEPS and self._ask_guide(why): continue
                     self.say("info", why); break
                 o = gamedata.quest_data('objectives', obj[1]) or {}
                 if not (self._fight_objective(*obj) if o.get('type') in FIGHT_TYPES else self._objective(*obj)): break
@@ -162,10 +169,16 @@ class Autopilot:
     def _pick(self):
         """-> ((quest id, objective id), None) or (None, reason). Only objectives of the zone we are in (the starting zone, Astrub...); among
         them the closest one first (steps from the current map), so the walking is as short as possible."""
-        unsupported = None; cands = []
+        unsupported = None; cands = []; self._stuck = []
+        def block(qid, oid, msg):
+            nonlocal unsupported
+            self._stuck.append((qid, oid)); unsupported = unsupported or msg
         with self.s._lock: quests = {q: (st, dict(objs)) for q, (st, objs) in self.s.quests.items()}
+        if self.quest_id is not None and self.quest_id not in quests:
+            return None, "la quête sélectionnée est terminée ou n'est plus active"
         here = self._world(self.s.map_id); reach = distances(self.s.map_id) if self.s.map_id else {}
         for qid, (_step, objs) in quests.items():
+            if self.quest_id is not None and qid != self.quest_id: continue
             for oid, active in objs.items():
                 if not active: continue
                 o = gamedata.quest_data("objectives", oid) or {}
@@ -173,22 +186,50 @@ class Autopilot:
                 if kind and kind not in self.kinds: continue
                 text = gamequests.objective_text(oid)
                 if o.get("map") and here and self._world(int(o["map"])) not in (None, here): continue      # another zone: not our business now
-                if o.get("type") in TALK_TYPES | USE_TYPES and o.get("map"):
-                    tgt = int(o["map"])
-                    if self.attempts[oid] >= (FREE_ATTEMPTS if o.get("type") in USE_TYPES else MAX_ATTEMPTS): unsupported = unsupported or f"objectif « {text} » : échec après {self.attempts[oid]} essais"
-                    elif self.s.map_id != tgt and route(self.s.map_id, tgt) is None and not self._can_discover(tgt):
-                        unsupported = unsupported or f"objectif « {text} » : aucune route connue (porte non apprise ?)"
-                    else: cands.append((0 if self.s.map_id == tgt else reach.get(tgt, 30), qid, oid))
+                if o.get("type") in TALK_TYPES | USE_TYPES:
+                    if self.attempts[oid] >= (FREE_ATTEMPTS if o.get("type") in USE_TYPES else MAX_ATTEMPTS):
+                        block(qid, oid, f"objectif « {text} » : échec après {self.attempts[oid]} essais")
+                    elif o.get("map"):
+                        tgt = int(o["map"])
+                        if self.s.map_id != tgt and route(self.s.map_id, tgt) is None and not self._can_discover(tgt):
+                            block(qid, oid, f"objectif « {text} » : aucune route connue (porte non apprise ?)")
+                        else: cands.append((0 if self.s.map_id == tgt else reach.get(tgt, 30), qid, oid))
+                    elif o.get("type") == 0:
+                        maps = self._objective_location_maps(text, reach)
+                        if maps: cands.append((reach[maps[0]], qid, oid))
+                        else: block(qid, oid, f"objectif « {text} » : sous-zone ou carte introuvable")
+                    else: block(qid, oid, f"objectif « {text} » : carte inconnue")
                 elif o.get("type") in FIGHT_TYPES and self.attempts[oid] < FIGHT_ATTEMPTS and (
                         int(o["p"][0]) in {m for ms in self.s.groups.values() for m in ms} or gamedata.monster_maps(int(o["p"][0])) or o.get("map")):
                     tgt = int(o["map"]) if o.get("map") else 0
                     here_group = int(o["p"][0]) in {m for ms in self.s.groups.values() for m in ms}
                     cands.append((0 if here_group else reach.get(tgt, 12) if tgt else 12, qid, oid))
-                elif o.get("type") in FIGHT_TYPES: unsupported = unsupported or f"objectif « {text} » : aucun groupe de ce monstre sur la carte actuelle"
-                else: unsupported = unsupported or f"objectif « {text} » : type non géré"
+                elif o.get("type") in FIGHT_TYPES: block(qid, oid, f"objectif « {text} » : aucun groupe de ce monstre sur la carte actuelle")
+                else: block(qid, oid, f"objectif « {text} » : type non géré")
         if cands:
             _d, qid, oid = min(cands); return (qid, oid), None
         return None, ("aucun objectif géré — " + unsupported) if unsupported else "aucune quête en cours"
+
+    def _objective_location_maps(self, text, reach=None, broad=False):
+        """Resolve a mapless free-text objective to reachable maps in its subarea or the current world."""
+        world = self._world(self.s.map_id)
+        if not world: return []
+        normalize = lambda value: "".join(c for c in unicodedata.normalize("NFKD", str(value)).casefold() if not unicodedata.combining(c))
+        key = (world, normalize(text), broad)
+        if key not in self._location_maps:
+            matches = []
+            for mid, raw in gamedata.data().get("maps", {}).items():
+                if not isinstance(raw, list) or len(raw) < 4: continue
+                info = gamedata.map_info(int(mid))
+                if not info or info["world"] != world: continue
+                if not broad:
+                    if not info["subarea"]: continue
+                    name = normalize(info["subarea"])
+                    if not re.search(r"(?<![a-z0-9])" + re.escape(name) + r"(?![a-z0-9])", key[1]): continue
+                matches.append(int(mid))
+            self._location_maps[key] = matches
+        reach = distances(self.s.map_id) if reach is None else reach
+        return sorted((mid for mid in self._location_maps[key] if mid in reach), key=lambda mid: (reach[mid], mid))
 
     # ---- LLM guide ----
     def _ask_guide(self, reason, instruction=None):
@@ -197,6 +238,50 @@ class Autopilot:
         actions, why = guide.plan(state, instruction)
         self.say("info", f"guide Groq : {why or 'aucune suggestion'}" + (f" — {len(actions)} action(s)" if actions else ""))
         return self._run_actions(actions)
+
+    def _hint_maps(self, hint):
+        """Maps (reachable from here, closest first) that a quest hint {x, y, subarea} points to; [] if it matches nothing known."""
+        world = self._world(self.s.map_id)
+        if not world: return []
+        norm = lambda v: "".join(c for c in unicodedata.normalize("NFKD", str(v or "")).casefold() if not unicodedata.combining(c)).strip()
+        sub = norm(hint.get("subarea")); x, y = hint.get("x"), hint.get("y"); reach = distances(self.s.map_id); found = []
+        for mid in reach:
+            info = gamedata.map_info(mid)
+            if not info or info["world"] != world: continue
+            same_sub = bool(sub) and norm(info["subarea"]) == sub
+            if x is not None and y is not None:
+                if info["x"] == x and info["y"] == y: found.append((0 if same_sub or not sub else 1, reach[mid], mid))
+            elif same_sub: found.append((0, reach[mid], mid))
+        return [m for _a, _b, m in sorted(found)]
+
+    def _unblock(self):
+        """Objectives the bot cannot handle (no map, no route, unknown place...): ask Groq what it knows about the quest, go where it points
+        and let the guide act there. Once per objective and run; hints are kept in the quest book. -> True if something was executed."""
+        here = self.s.map_id; did = False
+        for qid, oid in list(dict.fromkeys(self._stuck)):
+            if oid in self._hinted or not self._alive(): continue
+            self._hinted.add(oid)
+            quest = (gamedata.quest_data("quests", qid) or {}).get("name"); text = gamequests.objective_text(oid)
+            hint = questbook.get_hint(oid)
+            if hint is None:
+                info = gamedata.map_info(here) if here else None
+                hint, err = guide.quest_hint(quest, text, f"{info['subarea']} [{info['x']}, {info['y']}]" if info else None)
+                if err: self.say("warn", f"indice Groq indisponible : {err}"); continue
+                if hint: questbook.record_hint(oid, qid, hint)
+            if not hint: self.say("info", f"Groq ne connaît pas d'indice pour « {text} »"); continue
+            self.say("info", f"indice Groq pour « {text} » : {hint.get('why') or ''} → {hint.get('subarea') or '?'} [{hint.get('x')}, {hint.get('y')}]" + (f", PNJ {hint['npc']}" if hint.get("npc") else ""))
+            maps = self._hint_maps(hint)
+            if not maps: self.say("warn", "l'indice ne correspond à aucune carte accessible"); continue
+            if self.s.map_id != maps[0]:
+                self.goal = f"{text} (indice Groq, carte {maps[0]})"
+                if not self._travel(maps[0]): continue
+            did = True
+            order = f"Quête « {quest} », objectif : « {text} ». Indice : {hint.get('why') or ''}" + (f" Parle au PNJ « {hint['npc']} »." if hint.get("npc") else "")
+            self._ask_guide("indice", order)
+            time.sleep(1.0)
+            try: self.s.sync_quests()
+            except Exception: pass
+        return did
 
     def _run_actions(self, actions):
         did = False
@@ -219,7 +304,7 @@ class Autopilot:
         """A free instruction from the player ('va voir le capitaine') translated into bot actions by the guide, then executed."""
         if self.on or self.s.status != "connected": return "autopilote actif ou personnage non connecté"
         if not guide.available(): return "clé Groq non configurée"
-        self.on = True; self.llm_steps = 0; self._stop = threading.Event()
+        self.quest_id = None; self.on = True; self.llm_steps = 0; self._stop = threading.Event()
         def run():
             try:
                 self.say("info", f"instruction : « {text} »")
@@ -234,7 +319,8 @@ class Autopilot:
         """Maps given by the active fight objectives themselves (a boss lives on one precise map)."""
         out = []
         with self.s._lock: quests = {q: dict(objs) for q, (_st, objs) in self.s.quests.items()}
-        for objs in quests.values():
+        for qid, objs in quests.items():
+            if self.quest_id is not None and qid != self.quest_id: continue
             for oid, active in objs.items():
                 o = gamedata.quest_data("objectives", oid) or {}
                 if active and o.get("type") in FIGHT_TYPES and o.get("map") and self.attempts[oid] < FIGHT_ATTEMPTS: out.append(int(o["map"]))
@@ -244,7 +330,8 @@ class Autopilot:
         """Monster ids of every active fight objective not yet exhausted."""
         out = set()
         with self.s._lock: quests = {q: dict(objs) for q, (_st, objs) in self.s.quests.items()}
-        for objs in quests.values():
+        for qid, objs in quests.items():
+            if self.quest_id is not None and qid != self.quest_id: continue
             for oid, active in objs.items():
                 o = gamedata.quest_data("objectives", oid) or {}
                 if active and o.get("type") in FIGHT_TYPES and self.attempts[oid] < FIGHT_ATTEMPTS: out.add(int(o["p"][0]))
@@ -357,9 +444,50 @@ class Autopilot:
         if ok: self.say("info", "objectif accompli"); return True
         self.say("warn", "objectif non validé après l'essai des éléments de la carte"); return self.attempts[oid] < FREE_ATTEMPTS
 
+    def _use_location_objective(self, qid, oid):
+        text = gamequests.objective_text(oid); maps = self._objective_location_maps(text)
+        if not maps:
+            self.say("warn", f"objectif « {text} » : aucune carte accessible dans la sous-zone indiquée"); return False
+        self.attempts[oid] += 1; self.goal = text
+        self.say("info", f"objectif : {self.goal} — recherche dans {len(maps)} carte(s) accessible(s)")
+        words = [w for w in re.findall(r"[a-zéèêàç]{4,}", text.lower()) if w not in ("lire", "utiliser", "contant", "légende", "dans", "avec")]
+        if "vestige" in words: words = ["vestige"]
+        done = lambda: not self.s.quests.get(qid, (None, {}))[1].get(oid, False)
+        searched = set(); travel_failed = False
+        def scan(candidates):
+            nonlocal travel_failed
+            for mid in candidates:
+                if not self._alive(): return False
+                if done(): self.say("info", "objectif accompli"); return True
+                searched.add(mid)
+                if self.s.map_id != mid and not self._travel(mid):
+                    travel_failed = True; return False
+                with self.s._lock: elements = dict(self.s.elements)
+                names = [gamedata.get("interactives", e.get("interactive")) or "" for e in elements.values()]
+                if not any(any(w in name.casefold() for w in words) for name in names): continue
+                self.say("info", f"élément correspondant trouvé sur la carte {mid}")
+                t0 = time.time()
+                try: ok = self.s.use_for_objective(words, done, strict=True)
+                except RuntimeError as e:
+                    self.say("warn", f"utilisation impossible sur la carte {mid} : {e}"); continue
+                if ok or done(): self.say("info", "objectif accompli"); return True
+                if any(ts >= t0 and t == "hgq" for ts, t, _body in list(self.s.recent)):
+                    self.s._send("kiq"); self.say("info", "menu du zaap fermé après l'examen")
+            return done()
+        if scan(maps): return True
+        if travel_failed or not self._alive(): return False
+        broader = [mid for mid in self._objective_location_maps(text, broad=True) if mid not in searched]
+        if broader:
+            self.say("info", f"aucun élément correspondant dans la sous-zone : recherche étendue à {len(broader)} autre(s) carte(s) de la zone")
+            if scan(broader): return True
+        self.say("warn", f"aucun élément correspondant trouvé dans les cartes accessibles pour « {text} »")
+        return False
+
     def _objective(self, qid, oid):
-        o = gamedata.quest_data("objectives", oid); npc_id, target = int(o["p"][0]), int(o["map"])
-        if o.get("type") in USE_TYPES: return self._use_objective(qid, oid, target)
+        o = gamedata.quest_data("objectives", oid); target = int(o.get("map") or 0)
+        if o.get("type") in USE_TYPES:
+            return self._use_objective(qid, oid, target) if target else self._use_location_objective(qid, oid)
+        npc_id = int(o["p"][0])
         self.goal = f"{gamequests.objective_text(oid)} (carte {target})"
         self.attempts[oid] += 1
         self.say("info", f"objectif : {self.goal} — essai {self.attempts[oid]}/{MAX_ATTEMPTS}")

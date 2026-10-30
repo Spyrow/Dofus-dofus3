@@ -19,6 +19,7 @@ ACK_IDS = {3, 7, 8, 10, 12, 13, 15, 16, 17, 23, 59}   # jsy ids the real client 
 MAX_GROUP = 3
 TURN_TIMEOUT = 60
 FIGHT_TIMEOUT = 600
+RESUME_IDLE_TIMEOUT = 20
 
 
 def s64(v):
@@ -73,13 +74,16 @@ class Fight:
     def reset(self):
         self.started, self.over, self.my_turn, self.cast_evt = (threading.Event() for _ in range(4))
         self.jvj_me = False; self.dead = set(); self.casts = {}
+        self.last_message_at = 0.0
         if not hasattr(self, "spell_score"): self.spell_score = {}   # spell id -> [reactions, silences], kept across fights
 
     # ---- messages (called from the session's receive loop) ----
     def on_message(self, t, body):
         import login
         s = self.s
-        if t == login.JXI: self.reset(); self.started.set()
+        if t == login.JXI: self.reset()
+        self.last_message_at = time.monotonic()
+        if t == login.JXI: self.started.set()
         elif t in (login.JUO, login.JWJ):
             for f, v in parse(body):
                 if f == 1 and isinstance(v, bytes):
@@ -134,6 +138,8 @@ class Fight:
             s._send(login.JXJ, f_varint(1, 1)); say("prêt (jxj)")
         end = time.time() + FIGHT_TIMEOUT
         while not self.over.is_set() and time.time() < end and s.status == "connected" and not s._stop.is_set():
+            if resume and time.monotonic() - self.last_message_at >= RESUME_IDLE_TIMEOUT:
+                raise RuntimeError(f"aucun message de combat depuis {RESUME_IDLE_TIMEOUT} s")
             if not self.my_turn.wait(1.0): continue
             self.my_turn.clear()
             time.sleep(0.8)   # the start-of-turn acknowledgements go out first

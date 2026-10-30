@@ -16,6 +16,11 @@ SYSTEM_PLAN = ("Tu guides un bot qui joue à Dofus 3. À partir de l'état fourn
                "talk {npc}, change_map {side}, use_element {element}, go_map {map_id}, attack {group}, stop {}. "
                "N'utilise que des identifiants présents dans l'état. Si rien de sûr n'est possible, renvoie stop. "
                "Réponds uniquement par un objet JSON: {\"actions\": [{\"action\": \"...\", ...}], \"why\": \"<explication courte en français>\"}.")
+SYSTEM_HINT = ("Tu connais Dofus (jeu français, Dofus 3) et ses quêtes. Un bot est bloqué sur un objectif de quête sans lieu précis. Dis où aller: "
+               "la sous-zone et les coordonnées [x, y] de la carte, et le nom du PNJ ou de l'élément à utiliser si tu le sais. "
+               "N'invente rien: si tu n'es pas sûr, mets null. "
+               "Réponds uniquement par un objet JSON: {\"subarea\": <nom ou null>, \"x\": <entier ou null>, \"y\": <entier ou null>, "
+               "\"npc\": <nom ou null>, \"why\": \"<explication courte en français>\"}.")
 ACTIONS = {"talk": "npc", "change_map": "side", "use_element": "element", "go_map": "map_id", "attack": "group", "stop": None}
 
 
@@ -60,3 +65,19 @@ def plan(state, instruction=None):
     raw = out.get("actions") if isinstance(out.get("actions"), list) else []
     actions = [a for a in (validate(x, state) for x in raw[:12]) if a][:5]   # validate first, then cap
     return actions, str(out.get("why") or "")[:240]
+
+
+def quest_hint(quest, objective, position):
+    """What Groq knows about where to solve a quest objective -> ({subarea, x, y, npc, why} or {} if it knows nothing, error or None).
+    Coordinates are checked later against the real maps; here they are only normalised."""
+    if not available(): return {}, "clé Groq non configurée"
+    user = json.dumps({"quête": quest, "objectif": objective, "position_actuelle_du_bot": position}, ensure_ascii=False)
+    try: out = groq.chat_json(SYSTEM_HINT, user, max_tokens=250)
+    except groq.GroqError as e: return {}, str(e)
+    def num(v):
+        try: return int(v)
+        except (TypeError, ValueError): return None
+    hint = {"subarea": str(out["subarea"])[:80] if out.get("subarea") else None, "x": num(out.get("x")), "y": num(out.get("y")),
+            "npc": str(out["npc"])[:80] if out.get("npc") else None, "why": str(out.get("why") or "")[:200]}
+    if hint["x"] is None or hint["y"] is None: hint["x"] = hint["y"] = None
+    return (hint if hint["subarea"] or hint["x"] is not None else {}), None

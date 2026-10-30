@@ -71,7 +71,9 @@ class Session:
 
     # ---- map state (fed by the message loop) ----
     def _on_map_message(self, t, body):
-        if t in FIGHT_MSGS: self.fight.on_message(t, body)
+        if t in FIGHT_MSGS:
+            self.fight.on_message(t, body)
+            self.in_fight = t != login.JWP
         if t == gamestate.KRG:
             try: self.stats = gamestate.characteristics(body)
             except (ValueError, IndexError): pass
@@ -95,9 +97,9 @@ class Session:
             if t == login.JNJ:
                 with self._lock: self.elements.update(gamedoors.elements(body))
         elif t == login.JXI:
-            self.in_fight = True; self.log("event", "Combat engagé")
+            self.log("event", "Combat engagé")
         elif t == login.JWP:
-            self.in_fight = False; self.log("event", "Combat terminé")
+            self.log("event", "Combat terminé")
         elif t == login.ICA:
             with self._lock: self.quests = {q: (st, objs) for q, st, objs in gamequests.active_quests(body)}
             for q, (st, objs) in list(self.quests.items()): self._book_quest(q, st, objs)
@@ -335,11 +337,18 @@ class Session:
         """Send jok for `path`, wait for the server's jnz and the walking time, then confirm with jny."""
         keys = gamemaps.movement_keys(path)
         self._moved.clear(); self._mapchanged.clear()
+        started = time.time()
         for attempt in range(2):     # after a refused request (joc, itz...) the server swallows the first move: send it once more
             self._send(login.JOK, f_bytes(1, b"".join(enc_varint(k) for k in keys)) + f_varint(2, self.map_id))
             self.log("action", f"→ jok : {len(path) - 1} cases, de {path[0]} à {path[-1]}" + (" (2e envoi)" if attempt else ""))
             if self._moved.wait(3): break
-        else: raise RuntimeError("le serveur n'a pas confirmé le déplacement (jnz)")
+        else:
+            received = [(t, body) for ts, t, body in self.recent if ts >= started]
+            detail = ", messages reçus : " + ", ".join(sorted({t for t, _body in received})) if received else ""
+            refusals = [",".join(str(value) for _field, value in parse(body) if isinstance(value, int))
+                        for t, body in received if t == "jpc"]
+            if refusals: detail += ", jpc fields : " + ";".join(refusals)
+            raise RuntimeError("le serveur n'a pas confirmé le déplacement (jnz)" + detail)
         end = time.time() + gamemaps.duration(path)
         while time.time() < end:
             if self._stop.is_set(): raise RuntimeError("déconnecté")
@@ -384,7 +393,14 @@ class Session:
         for n, (_pref, _len, cell, path) in enumerate(cands[:4]):
             if self.my_cell != cell: path, _ = self.plan(cell)
             if not path: continue
-            if len(path) > 1: self._walk(path)
+            try:
+                if len(path) > 1: self._walk(path)
+            except RuntimeError as err:
+                if self.map_id != start_map and self._mapchanged.is_set():
+                    self._remember_exit(start_map, side, cell); time.sleep(1.0); return
+                if self.status != "connected": raise
+                self.log("warn", f"trajet vers la case de sortie {cell} refusé : {err}")
+                continue
             if self.map_id != start_map and self._mapchanged.is_set():   # some borders change the map as soon as the exit cell is reached
                 self.log("info", f"la carte a changé en marchant sur la case de sortie {cell}"); self._remember_exit(start_map, side, cell); time.sleep(1.0); return
             self._mapchanged.clear()
@@ -493,10 +509,10 @@ class Session:
             if st.get("kiq"): self._send("kiq"); time.sleep(1.0)
         return bool(until())
 
-    def use_for_objective(self, words, until, max_cells=6):
+    def use_for_objective(self, words, until, max_cells=6, strict=False):
         """Quest objective that wants an interactive element used (a book to read...), no element id given: try the elements of the map
         whose model name matches one of `words` first, then the others, each from the cells where its use-cell is predicted, until the
-        objective is done. Door-like results (map change) are learned as usual. -> True when `until()` became true."""
+        objective is done. strict: skip elements whose model name does not match. Door-like results (map change) are learned as usual."""
         m = self.mapdata(); mid = self.map_id
         if not m: return False
         pos = gamemaps.element_positions(mid)
@@ -504,7 +520,8 @@ class Session:
         with self._lock: els = {k: dict(v) for k, v in self.elements.items()}
         def name(e): return (gamedata.get("interactives", els[e]["interactive"]) or "") if els[e].get("interactive") is not None else ""
         # a named element that matches no word of the objective is a resource / workshop / zaap: never touched (harvesting locks the character)
-        order = sorted((e for e in els if e not in known and els[e].get("skill") and (not name(e) or any(w in name(e).lower() for w in words))),
+        order = sorted((e for e in els if e not in known and els[e].get("skill") and
+                        ((bool(name(e)) and any(w in name(e).lower() for w in words)) if strict else (not name(e) or any(w in name(e).lower() for w in words)))),
                        key=lambda e: (not name(e), e))
         for e in order:
             cells = [None] + (gamemaps.stand_candidates(m, pos[e], max_cells, 260) if e in pos else [])
@@ -627,7 +644,7 @@ class Session:
         d = None
         if dialog:
             tpl = npcs.get(dialog.get("actor")); d = dict(dialog, npc=gamedata.quest_data("npcs", tpl) if tpl else None)
-        return {"auto": {"on": self.auto.on, "goal": self.auto.goal}, "live": self.status == "connected", "quests": [gamequests.quest_view(q, st, objs) for q, (st, objs) in quests.items()], "dialog": d,
+        return {"auto": {"on": self.auto.on, "goal": self.auto.goal, "quest_id": self.auto.quest_id}, "live": self.status == "connected", "quests": [gamequests.quest_view(q, st, objs) for q, (st, objs) in quests.items()], "dialog": d,
                 "npcs": [{"actor": a, "cell": actors.get(a), "name": gamedata.quest_data("npcs", t) or f"PNJ {t}"} for a, t in npcs.items()]}
 
     def _do_talk(self, actor):
@@ -687,6 +704,8 @@ class Session:
     def start(self):
         with self._lock:
             if self.status in ("connecting", "connected"): return False
+            self.in_fight = False
+            self.fight.reset()
             self._stop = threading.Event(); self.status, self.error, self.since = "connecting", None, time.time()
         self.log("info", "Connexion en cours…")
         self._thread = threading.Thread(target=self._run, daemon=True); self._thread.start()
