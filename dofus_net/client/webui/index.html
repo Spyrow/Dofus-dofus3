@@ -47,6 +47,27 @@ td input,td select{max-width:none;width:100%;min-width:56px}td input[type=number
   <div id="list"></div>
   <p><button class="p" id="add">+ Connecter un compte</button></p>
   <p class="msg" id="loginmsg"></p>
+  <div class="card" id="createbox" style="display:none">
+    <h2>Creer un compte Ankama</h2>
+    <p class="msg">Inscription automatique : un mail de confirmation est envoye, le code est recupere ici des reception.</p>
+    <div class="grid">
+      <div><input id="ce" placeholder="E-mail"></div>
+      <div><input id="cp" type="password" placeholder="Mot de passe"></div>
+      <div><input id="cf" placeholder="Prenom"></div>
+      <div><input id="cl" placeholder="Nom"></div>
+      <div><input id="cb" type="date" placeholder="Date de naissance"></div>
+    </div>
+    <p><button class="p" id="cgo">Creer le compte</button> <button id="ccancel">Annuler</button></p>
+    <p class="msg" id="cmsg"></p>
+    <div id="cconfirm" style="display:none;margin-top:10px">
+      <h3>Confirmer le compte</h3>
+      <p class="msg" id="cconfirmsg"></p>
+      <input id="ccode" placeholder="Code de confirmation (recupere du mail)"> <button class="p" id="cok">Valider</button>
+      <p class="hint">Le code est recupere automatiquement depuis le SMTP local (port 1025) dès que le mail arrive.</p>
+    </div>
+  </div>
+  <h2>Creations en cours</h2>
+  <div id="creations"></div>
 </aside>
 <main id="main"><p class="msg">Sélectionne un compte.</p></main>
 </div>
@@ -197,6 +218,41 @@ $("#add").onclick=async()=>{
     loadList();
   },1500);
 };
+
+// ---- Creation de compte ----
+let cpoll=null;
+async function loadCreations(){
+  try{const cs=await api("/api/account/create");$("#creations").innerHTML=cs.map(c=>`<div class="acc" style="cursor:default"><div>${esc(c.email)}<small>${fmt(c.created)}</small><small class="ss"><span class="dot ${c.status}"></span>${c.status}${c.has_code?" · code recu":""}</small></div></div>`).join("")}catch{}
+}
+async function pollCreations(){
+  try{const cs=await api("/api/account/create");if(cpoll&&cs.some(c=>c.status==="confirming"&&c.has_code)){$("#cconfirm").style.display="";$("#cmsg").textContent="Code recu dans le mail."}}catch{}
+}
+
+$("#cgo").onclick=async()=>{
+  const box=$("#createbox");box.style.display="none";
+  try{
+    await api("/api/account/create","POST",{
+      email:$("#ce").value,password:$("#cp").value,firstname:$("#cf").value,
+      lastname:$("#cl").value,birthdate:$("#cb").value});
+    $("#cmsg").textContent="Compte cree, confirmation en attente...";$("#cmsg").className="msg";
+    $("#cconfirm").style.display="";loadCreations();
+    cpoll=setInterval(pollCreations,2000);
+  }catch(e){box.style.display="";$("#cmsg").textContent=e.message;$("#cmsg").className="msg err"};
+};
+$("#ccancel").onclick=()=>{$("#createbox").style.display="none";};
+$("#cok").onclick=async()=>{
+  const code=$("#ccode").value.trim();if(!code)return;
+  try{
+    // on prend la derniere creation en attente
+    const cs=await api("/api/account/create");const pending=cs.find(c=>c.status==="confirming");
+    if(!pending){$("#cconfirmsg").textContent="Aucune creation en attente.";$("#cconfirmsg").className="msg err";return}
+    const r=await api("/api/account/create/confirm","POST",{id:pending.id,code});
+    $("#cconfirmsg").textContent="Compte confirme !";$("#cconfirmsg").className="msg";
+    $("#ccode").value="";clearInterval(cpoll);loadCreations();
+  }catch(e){$("#cconfirmsg").textContent=e.message;$("#cconfirmsg").className="msg err"};
+};
+$("#add").onclick=async()=>{$("#createbox").style.display=$("#createbox").style.display===""?"block":"none";};
+loadCreations();
 
 
 // ---- Current map: cells, path preview, click to walk, side arrows to change map ----
@@ -473,7 +529,7 @@ function initMap(a,d){
 let evT=null;
 try{
   const es=new EventSource("/api/events");   // live: reload when accounts or character snapshots change on disk
-  es.onmessage=e=>{if(e.data!=="changed")return;clearTimeout(evT);evT=setTimeout(()=>loadList(true).catch(()=>{}),150)};
+  es.onmessage=e=>{if(e.data!=="changed")return;clearTimeout(evT);evT=setTimeout(()=>{loadList(true).catch(()=>{});loadCreations().catch(()=>{})},150)};
 }catch{}
 loadList().catch(e=>$("#main").innerHTML=`<p class="err">${esc(e.message)}</p>`);
 </script></body></html>

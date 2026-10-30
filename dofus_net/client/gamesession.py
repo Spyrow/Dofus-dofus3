@@ -344,6 +344,24 @@ class Session:
             except Exception as e: self.log("warn", f"succès : {e}")
         threading.Thread(target=run, daemon=True).start()
 
+    def _do_accept_offer(self, quest_id, element, stand=None):
+        """A quest offered by an element (the job board of the tavern): use it, then icf {1: quest id} accepts it, kiq closes the offer.
+        The server answers icb / icj once the quest is taken."""
+        e = self.elements.get(element)
+        if not e or not e.get("skill"): raise RuntimeError("élément de l'offre introuvable sur la carte")
+        if stand is not None and self.my_cell != stand:
+            path, err = self.plan(stand)
+            if err: raise RuntimeError(f"case d'utilisation inaccessible : {err}")
+            if len(path) > 1: self._walk(path)
+        self._send(login.ITZ, f_varint(1, e["skill"]) + f_varint(3, element)); self.log("action", f"→ itz : offre de quête (élément {element}) depuis la case {self.my_cell}")
+        time.sleep(1.2)
+        self._send("icf", f_varint(1, quest_id)); self.log("action", f"→ icf : accepter la quête {quest_id}")
+        end = time.time() + 5
+        while time.time() < end and quest_id not in self.quests: time.sleep(0.2)
+        try: self._send("kiq")
+        except RuntimeError: pass
+        if quest_id not in self.quests: raise RuntimeError("la quête n'a pas été acceptée")
+
     def workshop_elements(self, job, skill=None):
         """Elements of the current map that are workshops for a recipe: the element type is the recipe's skill (Four = 27 for the bread),
         then the workshops named after the job."""
@@ -410,7 +428,7 @@ class Session:
         gone = [q for q, e in self._icj_events.items() if not e.is_set()]
         self._icj_events = {}
         with self._lock:
-            for q in gone: self.quests.pop(q, None)
+            for q in gone: self.quests.pop(q, None); self.finished_quests.add(q)      # a quest that stops answering is finished
         for q in gone: self.log("event", f"Quête terminée : « {(gamedata.quest_data('quests', q) or {}).get('name') or q} »")
         if gone: self.claim_achievements_later(3.0)      # a finished quest often unlocks achievements
         return gone
@@ -631,13 +649,16 @@ class Session:
     def _walk_stepwise(self, path):
         """Walk a refused path one cell at a time; the cell the server refuses is remembered (knowledge/bad_cells.json, used by plan())."""
         self.log("warn", f"trajet refusé : marche case par case ({len(path) - 1} cases) pour trouver la case bloquante")
+        moved = False
         for b in path[1:]:
             if self._mapchanged.is_set() or self._cancel(): return
-            try: self._walk([self.my_cell, b], attempts=1)
+            try: self._walk([self.my_cell, b], attempts=1); moved = True
             except RuntimeError:
                 if self._mapchanged.is_set(): return
-                try: time.sleep(1.0); self._walk([self.my_cell, b], attempts=1); continue      # a second try: an actor passing by also makes a step fail
+                try: time.sleep(1.0); self._walk([self.my_cell, b], attempts=1); moved = True; continue      # a second try: an actor passing by also makes a step fail
                 except RuntimeError: pass
+                if not moved:      # not even the first step works: the server does not see us where we think we are (jpc -9), no cell is to blame
+                    raise autopilot.DesyncError("le serveur refuse même le premier pas : position désynchronisée")
                 with knowledge._lock:
                     d = knowledge.load("bad_cells.json", {}); lst = d.setdefault(str(self.map_id), [])
                     if b not in lst: lst.append(b); knowledge.save("bad_cells.json", d)
@@ -754,6 +775,16 @@ class Session:
     PROBE_FILE = "probed_doors.json"
 
     def probe_doors(self, max_cells=8):
+        """Door discovery on the current map. If nothing is left to try because the cells were all tried before (maybe by an earlier, less accurate
+        prediction), forget them for this map and try once more with a wider ring of cells. -> True if a passage was found."""
+        if self._probe_doors_once(max_cells): return True
+        with knowledge._lock:
+            d = knowledge.load(self.PROBE_FILE, {})
+            if not d.pop(str(self.map_id), None): return False
+            knowledge.save(self.PROBE_FILE, d)
+        return self._probe_doors_once(max(max_cells, 12))
+
+    def _probe_doors_once(self, max_cells=8):
         """Door discovery on the current map: try every unknown interactive element (door skills first) from the cells where its use-cell is
         predicted (gamemaps.stand_candidates). Stops at the first one that changes the map (it is recorded by _do_use). Cells already tried
         are remembered in knowledge/probed_doors.json. -> True if a passage was found."""
@@ -764,6 +795,8 @@ class Session:
         skills = {d.get("skill") for lst in gamedoors.load().values() for d in lst if d.get("skill")}
         with self._lock: els = dict(self.elements)
         # only skills already seen on real doors: other elements are resources (a harvest locks the character until it ends), workshops, zaaps...
+        notdoors = {int(o["element"]) for o in knowledge.load("quest_starters.json", {}).values()}      # job boards: used for quests, they lead nowhere
+        els = {k: v for k, v in els.items() if k not in notdoors}
         arr = self.arrival_cell if self.arrival_inside else None      # across a border the arrival cell says nothing about the doors
         def man(a, b): (x, y), (X, Y) = gamemaps.to_xy(a), gamemaps.to_xy(b); return abs(x - X) + abs(y - Y)
         order = sorted((e for e in els if e not in known and e in pos and (els[e].get("skill") in skills or els[e].get("type") in gamejobs.door_types())),   # every door has its own skill id: they share the element type

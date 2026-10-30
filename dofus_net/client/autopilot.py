@@ -108,7 +108,7 @@ class DesyncError(RuntimeError):
 class Autopilot:
     def __init__(self, sess):
         self.s = sess; self.explore = 0; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.quest_id = None; self.kinds = {"talk", "fight", "craft"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False; self.fight_played = False; self._stuck = []; self._hinted = set()
-        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}; self._start_tried = set()
+        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}; self._start_tried = set(); self._prefer_words = set(); self._steps_taken = collections.deque(maxlen=40)
 
     # ---- control ----
     def start(self, kinds=None, llm=False, quest_id=None):
@@ -142,9 +142,17 @@ class Autopilot:
         try:
             with self.s._lock: self.s.busy = label
             self.s.log("action", label); fn()
-        finally:
+        except DesyncError as e:
             with self.s._lock: self.s.busy = None
             self.s._act.release()
+            self.say("warn", "position désynchronisée : reconnexion")
+            try: self.s.reconnect(); e.reconnected = True
+            finally: self.s._act.acquire(timeout=60)
+            raise
+        finally:
+            with self.s._lock: self.s.busy = None
+            try: self.s._act.release()
+            except RuntimeError: pass
 
     # ---- main loop ----
     def _run(self):
@@ -178,6 +186,7 @@ class Autopilot:
                         if self.llm and self._alive():      # the bot gave up on it: maybe Groq knows where it really is
                             self._stuck = [obj]
                             if self._unblock(): continue
+                        if self._alive() and self.attempts[obj[1]] > 0: time.sleep(0.5); continue      # the other objectives may unlock it (a quest needing two items); _pick skips this one once its tries are used
                         break
                     time.sleep(0.5)
                 if self._stop.is_set() or self.s.status == "connected": break       # a normal end
@@ -563,7 +572,11 @@ class Autopilot:
             try: self.s.sync_quests()
             except Exception: pass
             ok = done()
-        if not ok and self.s.npcs and self._alive():       # no element did it: an NPC of the map may open the way (the gravedigger lets you into the crypt...)
+        if not ok and self._alive():       # no named element did it: the way is a door of this map (the cellar of a tavern): doors before NPCs
+            try: found = self.s.probe_doors()
+            except RuntimeError as e: self.say("warn", f"test de porte impossible : {e}"); found = False
+            if found: self.say("event", f"porte trouvée : carte {self.s.map_id}"); self._sleep(2.0); return self.attempts[oid] < FREE_ATTEMPTS
+        if not ok and self.s.npcs and self._alive():       # still nothing: an NPC of the map may open the way (the gravedigger lets you into the crypt...)
             self.say("info", "aucun élément ne valide l'objectif : j'essaie de parler aux PNJ de la carte")
             ok = self._talk_npcs(qid, oid, text)
         if ok: self.say("info", "objectif accompli"); return True
@@ -616,6 +629,14 @@ class Autopilot:
         if o.get("type") in USE_TYPES:
             return self._use_objective(qid, oid, target) if target else self._use_location_objective(qid, oid)
         npc_id = int(o["p"][0])
+        if o.get("type") == 3 and len(o["p"]) >= 3 and gamejobs.item_name(int(o["p"][1])):      # "Ramener à #1 : x#3 #2": have the item first
+            item, qty = int(o["p"][1]), max(1, int(o["p"][2] or 1))
+            if self.s.have(item) < qty:
+                self.attempts[oid] += 1; self._acquiring_for = qid
+                self.say("info", f"objectif : {gamequests.objective_text(oid)} — il me manque {qty - self.s.have(item)} {gamejobs.item_name(item)} : je vais le chercher")
+                try: got = self._gather(item, qty)
+                finally: self._acquiring_for = None
+                if not got: return self.attempts[oid] < MAX_ATTEMPTS and self._alive()
         self.goal = f"{gamequests.objective_text(oid)} (carte {target})"
         self.attempts[oid] += 1
         self.say("info", f"objectif : {self.goal} — essai {self.attempts[oid]}/{MAX_ATTEMPTS}")
@@ -682,12 +703,66 @@ class Autopilot:
         if not ok: return None
         return min(ok, key=lambda a: (len(groups[a]), cell_dist(me, actors[a]) if me is not None and a in actors else 99))
 
-    def _hunt(self, item_id, need):
+    def _drop_monsters(self, item_id, qid):
+        """Monsters that drop `item_id`, read in the scraped guide of the quest: the sentence that names the item and talks about a drop, and the
+        monsters (questdata names, plural allowed) it names. -> set of monster ids."""
+        g = dpln.find((gamedata.quest_data("quests", qid) or {}).get("name")) if qid else None
+        item = gamejobs.norm(gamejobs.item_name(item_id))
+        if not g or not item: return set()
+        gamedata.quest_data("monsters", 0)
+        names = {}
+        for mid, nm in (gamedata._quest or {}).get("monsters", {}).items():
+            n = gamejobs.norm(nm)
+            if len(n) >= 4: names.setdefault(n, set()).add(int(mid))
+        out = set(); sentences = []
+        for step in g.get("steps") or []:
+            sn = gamejobs.norm(step)
+            if not gamejobs.mentions(item, sn) or not re.search(r"drop|loot|butin|obtient|r[ée]cup", sn): continue
+            sentences.append(sn)
+            hit = [n for n in names if re.search(r"(?<![a-z0-9])" + re.escape(n) + r"s?(?![a-z0-9])", sn)]
+            for n in hit:
+                if not any(n != m and n in m for m in hit): out |= names[n]      # "tofu" inside "tofu chimerique" is the same monster
+        if not out and sentences:       # only a zone is named ("dans la Forêt d'Incarnam"): the monsters of that zone
+            D = gamedata.data(); area = (gamedata.map_info(self.s.map_id) or {}).get("area") if getattr(self, "s", None) and self.s.map_id else "Incarnam"
+            area_ids = {k for k, v in D.get("areas", {}).items() if v[0] == area}
+            for sid, sub in D.get("subareas", {}).items():
+                n = gamejobs.norm(sub[0])
+                if str(sub[1]) in area_ids and len(n) >= 4 and any(re.search(r"(?<![a-z0-9])" + re.escape(n) + r"(?![a-z0-9])", st) for st in sentences):
+                    out |= set(D.get("subarea_monsters", {}).get(sid, []))
+        return out
+
+    def _buy_item(self, item_id, need, qid):
+        """An item sold by an NPC (the guide: "Grobid vous vendra du Lailait pour 4 kamas"): go to the seller and talk to him, choosing in his dialog
+        the replies that name the item. -> True when the inventory holds `need`."""
+        import questreport
+        name = gamejobs.item_name(item_id)
+        sel = questreport.seller(name, (gamedata.quest_data("quests", qid) or {}).get("name")) if qid else None
+        if not sel: return False
+        npc, ids, maps = sel
+        reach = distances(self.s.map_id); maps = [m for m in maps if m == self.s.map_id or route(self.s.map_id, m) is not None]
+        if not maps: self.say("warn", f"{npc} (qui vend {name}) est hors de portée"); return False
+        tgt = min(maps, key=lambda m: reach.get(m, 0))
+        self.say("info", f"achat : {name} ({self.s.have(item_id)}/{need}) chez {npc} (carte {tgt})"); self.goal = f"acheter {need} {name}"
+        self._prefer_words = {gamejobs.norm(name)}
+        try:
+            for _ in range(need - self.s.have(item_id) + 2):
+                if not self._alive() or self.s.have(item_id) >= need: break
+                if self.s.map_id != tgt and not self._travel(tgt): return False
+                actor = next((a for i in ids for a in [self._find_npc(i)] if a is not None), None)
+                if actor is None: self.say("warn", f"{npc} introuvable sur la carte {tgt}"); return False
+                try: self._act(f"Parler au PNJ {actor}", lambda: self.s._do_talk(actor))
+                except RuntimeError as e: self.say("warn", f"dialogue impossible : {e}"); return False
+                self._dialog(); self._sleep(1.5)
+        finally: self._prefer_words = set()
+        return self.s.have(item_id) >= need
+
+    def _hunt(self, item_id, need, wanted=None):
         """Meat comes from monsters: with the hunter's knife equipped, every monster killed may leave `item_id`. Fight the easiest group of this map,
-        then of the nearest maps of the zone, until the inventory holds `need`. The knife must already be worn (equipping is not implemented)."""
+        then of the nearest maps of the zone, until the inventory holds `need`. `wanted`: monster ids that drop the item (then no knife is needed and
+        their groups, on the maps where they live, are the targets)."""
         name = gamejobs.item_name(item_id) or str(item_id)
         knives = gamejobs.hunting_knives()
-        if not (knives & self.s.equipped):
+        if wanted is None and not (knives & self.s.equipped):
             owned = [g for g in knives if any(v[0] == g for v in self.s.inv.values())]
             if not owned:
                 self.say("warn", f"« {name} » est un butin de chasseur : il faut un couteau de chasse dans l'inventaire"); return False
@@ -697,7 +772,7 @@ class Autopilot:
         self.say("info", f"chasse : {name} ({self.s.have(item_id)}/{need}), couteau équipé"); self.goal = f"chasser : {need} {name}"
         visited = set(); fights = maps = 0
         while self._alive() and self.s.have(item_id) < need and fights < MAX_HUNT_FIGHTS:
-            group = self._easiest_group()
+            group = self._best_group(set(wanted)) if wanted else self._easiest_group()
             if group is not None:
                 with self.s._lock: ms = list(self.s.groups.get(group, []))
                 self.say("info", f"combat contre {', '.join(gamedata.quest_data('monsters', m) or str(m) for m in ms)}")
@@ -706,6 +781,7 @@ class Autopilot:
                 fights += 1; time.sleep(REST_SECONDS + 3); continue
             cur = self.s.map_id; visited.add(cur); dist = distances(cur); world = self._world(cur)
             cands = [m for m in dist if m not in visited and self._world(m) == world and dist[m] <= 6]
+            if wanted: cands = [m for w in wanted for m in gamedata.monster_maps(w) if m in dist and m not in visited] or cands      # where those monsters live
             maps += 1
             if not cands or maps > MAX_GATHER_MAPS: self.say("warn", f"plus de carte à visiter pour trouver un groupe à tuer ({name})"); return False
             nxt = min(cands, key=lambda m: dist[m])
@@ -743,7 +819,10 @@ class Autopilot:
         reachable map of the zone). `near`: a map (the workshop's) whose zone is searched first: the wood for the Forêt workshop grows in the Forêt.
         The job's experience comes with every harvest. -> True when enough."""
         name = gamejobs.item_name(item_id) or str(item_id); models = gamejobs.resource_skills(item_id)      # element types (= skill ids) that give this item
-        if not models: return self._hunt(item_id, need)      # no resource gives it: a monster drop (meat...)
+        if not models:
+            qid = getattr(self, '_acquiring_for', None); wanted = self._drop_monsters(item_id, qid)
+            if not wanted and self._buy_item(item_id, need, qid): return True      # sold by an NPC the guide names
+            return self._hunt(item_id, need, wanted or None)      # a monster drop
         self.say("info", f"récolte : {name} ({self.s.have(item_id)}/{need})"); self.goal = f"récolter {need} {name}"
         visited = set(); fails = rounds = maps = doors_tried = 0; hinted = set()
         while self._alive() and self.s.have(item_id) < need:
@@ -798,7 +877,10 @@ class Autopilot:
                 if route(self.s.map_id, target) is None and not self._discover(target): return False
                 if not self._travel(target): return False
                 self._sleep(2.0)
-            if not self._gather(ing, q * qty, near=target or None): return self.attempts[oid] < MAX_ATTEMPTS and self._alive()
+            self._acquiring_for = qid
+            try: got = self._gather(ing, q * qty, near=target or None)
+            finally: self._acquiring_for = None
+            if not got: return self.attempts[oid] < MAX_ATTEMPTS and self._alive()
         if not self._alive(): return False
         if target and self.s.map_id != target:
             if route(self.s.map_id, target) is None and not self._discover(target): return False
@@ -827,6 +909,14 @@ class Autopilot:
         for qid, q in sorted(questreport.area_quests(info["area"]).items(), key=lambda kv: (kv[1]["level"] or 0, kv[0])):
             if qid in done or qid in active or qid in self._start_tried: continue
             self._start_tried.add(qid)
+            offer = knowledge.load("quest_starters.json", {}).get(str(qid))
+            if offer:         # the quest starts from an element (a job board), not from an NPC
+                tgt = int(offer["map"]); self.say("info", f"nouvelle quête « {q['name']} » (niveau {q['level']}) : offre sur la carte {tgt}")
+                if self.s.map_id != tgt and (route(self.s.map_id, tgt) is None or not self._travel(tgt)): self.say("warn", "carte de l'offre hors de portée"); continue
+                self._sleep(2.0)
+                try: self._act(f"Accepter la quête {q['name']}", lambda: self.s._do_accept_offer(qid, int(offer["element"]), offer.get("stand")))
+                except RuntimeError as e: self.say("warn", f"offre impossible : {e}"); continue
+                self.say("event", f"quête « {q['name']} » démarrée"); return True
             st = questreport.starter(q["name"])
             if not st: self.say("info", f"quête « {q['name']} » : PNJ de départ introuvable dans le guide, je la laisse"); continue
             npc, ids, maps = st
@@ -864,8 +954,8 @@ class Autopilot:
             mi = gamedata.map_info(mid)
             if not mi or mid == goal or mi["world"] != gi["world"]: continue
             d = max(abs(mi["x"] - gi["x"]), abs(mi["y"] - gi["y"]))
-            if d <= 1: out.append((d, steps, mid))
-        return [mid for _d, _s, mid in sorted(out)][:6]
+            if d <= 1: out.append((d, mi["subarea"] != gi["subarea"], steps, mid))      # the same zone first (the cellar of the Taverne is entered from inside the Taverne)
+        return [mid for _d, _z, _s, mid in sorted(out)][:6]
 
     def _can_discover(self, goal):
         return self.discover_tries[goal] < 2 and bool(self._discover_maps(goal))
@@ -901,6 +991,10 @@ class Autopilot:
             if r is None: self.say("error", f"aucune route de la carte {cur} à la carte {goal} (porte non apprise, zaap ou carte inconnue ?)"); return False
             kind, arg = r[0]
             self.say("info", f"voyage vers {goal} : {len(r)} étape(s), prochaine : " + (arg if kind == "side" else f"case-déclencheur {arg['cell']}" if arg.get("kind") == "step" else f"porte (élément {arg['element']})"))
+            key = (cur, arg if kind == "side" else arg.get("element") or arg.get("cell")); now = time.time()
+            self._steps_taken.append((now, key))
+            if sum(1 for t, k in self._steps_taken if k == key and now - t < 300) > 4:      # A->B->A->B... : every step changes the map, so the check below never fires
+                self.say("error", f"le voyage tourne en rond (même étape répétée depuis la carte {cur}), abandon"); self._steps_taken.clear(); return False
             prev = cur
             try:
                 if kind == "side": self._act(f"Changer de carte ({arg})", lambda: self.s._do_change_map(arg))
@@ -910,7 +1004,7 @@ class Autopilot:
                 resyncs += 1
                 if resyncs > 2: self.say("error", f"voyage interrompu : {e}"); return False
                 self.say("warn", f"{e} — reconnexion ({resyncs}/2)")
-                if not self.s.reconnect(): self.say("error", "reconnexion impossible"); return False
+                if not getattr(e, "reconnected", False) and not self.s.reconnect(): self.say("error", "reconnexion impossible"); return False
                 prev = None; continue
             except RuntimeError as e:
                 if kind == "side" and ("case de sortie" in str(e) or "carte voisine" in str(e)) and blocked_retries < 3:
@@ -955,6 +1049,28 @@ class Autopilot:
         time.sleep(REST_SECONDS)
         return bool(played and played[0])
 
+    def _reply_by_context(self, replies):
+        """Pick the reply that talks about the active quests: its words (proper names count triple) are looked up in the quest names, the active
+        objectives and the first steps of their scraped guides. None when no reply stands out."""
+        with self.s._lock: quests = {q: dict(objs) for q, (_st, objs) in self.s.quests.items()}
+        ctx = []
+        for qid, objs in quests.items():
+            name = (gamedata.quest_data("quests", qid) or {}).get("name") or ""
+            ctx.append(name); ctx += [gamequests.objective_text(o) for o, active in objs.items() if active]
+            g = dpln.find(name)
+            if g: ctx += (g.get("steps") or [])[:3]
+        words = set(gamejobs.norm(" ".join(ctx)).split())
+        def score(text):
+            sc = 0
+            for i, w in enumerate(re.findall(r"[^\W\d_]+", text)):
+                n = gamejobs.norm(w)
+                if len(n) >= 5 and n in words: sc += 3 if (i > 0 and w[0].isupper()) else 1
+            if any(p and p in gamejobs.norm(text) for p in self._prefer_words): sc += 6      # the item being bought
+            return sc
+        scored = sorted(((score(x["text"]), x) for x in replies if not REFUSE.search(x["text"])), key=lambda t: -t[0])
+        if scored and scored[0][0] >= 2 and (len(scored) == 1 or scored[0][0] > scored[1][0]): return scored[0][1]
+        return None
+
     def _dialog_steps(self):
         for depth in range(30):
             d = self.s.dialog
@@ -964,6 +1080,9 @@ class Autopilot:
             d = self.s._dlg or {}
             r = questbook.suggest_reply(d.get("npc"), d.get("map"), d.get("path", []), replies, self.s._active_objectives(), REFUSE)
             src = "livre de quêtes" if r else "heuristique"
+            if r is None and len(replies) > 1:
+                r = self._reply_by_context(replies)
+                if r: src = "contexte de la quête"
             if r is None and self.llm:
                 quest = "; ".join(f"{o['quête']} : {o['objectif']}" for o in self.s.guide_state()["objectifs_actifs"][:4])
                 npc = gamedata.quest_data("npcs", d.get("npc")) if d.get("npc") else None

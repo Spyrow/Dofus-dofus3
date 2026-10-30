@@ -186,6 +186,20 @@
     }
    }
   },
+  "1633": {
+   "name": "Mort au rat !",
+   "seen": 19,
+   "steps": {
+    "2253": {
+     "name": "Mort au rat !",
+     "objectives": {
+      "9769": "Faire sortir le rat de sa cachette",
+      "9770": "Vaincre x1 Rat Soiffé en un seul combat",
+      "9895": "Inspecter la cave."
+     }
+    }
+   }
+  },
   "1634": {
    "name": "Espoirs et tragédies",
    "seen": 80,
@@ -215,6 +229,23 @@
       "9785": "Vaincre le Milimilou",
       "9786": "Aller voir Hargnok",
       "9787": "Retourner voir Fécaline la Sage"
+     }
+    }
+   }
+  },
+  "1637": {
+   "name": "La galette secrète",
+   "seen": 33,
+   "steps": {
+    "2257": {
+     "name": "La galette secrète",
+     "objectives": {
+      "9805": "Lire la recette de la galette d'Incarnam",
+      "9806": "Fabriquer 1 Galette d'Incarnam et fermer l'interface",
+      "9807": "Montrer à Anta Brok : 1 Galette d'Incarnam",
+      "9808": "Aller voir Pipelette",
+      "9809": "Ramener à Pipelette : x5 Ortie",
+      "9810": "Montrer à Anta Brok : 1 Pot de Confiture Maison"
      }
     }
    }
@@ -444,9 +475,21 @@
     }
    }
   },
+  "1655": {
+   "name": "Un peu de pigment",
+   "seen": 8,
+   "steps": {
+    "2275": {
+     "name": "Un peu de pigment",
+     "objectives": {
+      "9970": "Ramener à Marylork : x3 Poudre d'Aminite"
+     }
+    }
+   }
+  },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 475,
+   "seen": 530,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",
@@ -497,6 +540,23 @@
       "19267": "Montrer à Berb Nhin : 1 Bounihimée",
       "19268": "Fabriquer 1 Clef de la Crypte de Kardorim et fermer l'interface",
       "19269": "Montrer à Berb Nhin : 1 Clef de la Crypte de Kardorim"
+     }
+    }
+   }
+  },
+  "826": {
+   "name": "La fin du règne",
+   "seen": 20,
+   "steps": {
+    "1449": {
+     "name": "La fin du règne",
+     "objectives": {
+      "13766": "Récupérer une grande feuille verte",
+      "5245": "Aller voir Nina Chichi",
+      "5246": "Ramener à Nina Chichi : x1 Grande Feuille Verte",
+      "5247": "Ramener à Anta Brok : x1 Plume Chimérique",
+      "5248": "Ramener à Nina Chichi : x1 Ficelle de Vigne",
+      "5249": "Ramener à Regnator : x1 Culotte en feuille"
      }
     }
    }
