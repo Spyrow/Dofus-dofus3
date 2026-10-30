@@ -92,6 +92,10 @@ def pick_reply(replies, prefer=None):
     return replies[0]
 
 
+class DesyncError(RuntimeError):
+    """The server refuses every move from the cell we believe we are on: our position is out of sync (reconnecting resets it)."""
+
+
 class Autopilot:
     def __init__(self, sess):
         self.s = sess; self.explore = 0; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.quest_id = None; self.kinds = {"talk", "fight"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False; self.fight_played = False; self._stuck = []; self._hinted = set()
@@ -155,7 +159,12 @@ class Autopilot:
                     if self.quest_id is None and self.llm and self.llm_steps < MAX_LLM_STEPS and self._ask_guide(why): continue
                     self.say("info", why); break
                 o = gamedata.quest_data('objectives', obj[1]) or {}
-                if not (self._fight_objective(*obj) if o.get('type') in FIGHT_TYPES else self._objective(*obj)): break
+                if not (self._fight_objective(*obj) if o.get('type') in FIGHT_TYPES else self._objective(*obj)):
+                    self.say("info", f"objectif « {gamequests.objective_text(obj[1])} » abandonné" + ("" if self._alive() else " (arrêt demandé ou déconnexion)"))
+                    if self.llm and self._alive():      # the bot gave up on it: maybe Groq knows where it really is
+                        self._stuck = [obj]
+                        if self._unblock(): continue
+                    break
                 time.sleep(0.5)
         except Exception as e:
             self.say("error", f"{type(e).__name__}: {e}")
@@ -548,7 +557,7 @@ class Autopilot:
 
     def _travel(self, goal):
         """Walk/use doors until map `goal` is reached. A step must change the map: if it does not, give up instead of looping."""
-        prev = None; blocked_retries = 0
+        prev = None; blocked_retries = 0; resyncs = 0
         for _ in range(MAX_TRAVEL_STEPS):
             cur = self.s.map_id
             if not self._alive(): return False
@@ -563,6 +572,12 @@ class Autopilot:
                 if kind == "side": self._act(f"Changer de carte ({arg})", lambda: self.s._do_change_map(arg))
                 elif arg.get("kind") == "step": self._act(f"Marcher sur la case {arg['cell']}", lambda: self.s._do_step(arg["cell"], bool(arg.get("guess"))))
                 else: self._act(f"Utiliser l'élément {arg['element']}", lambda: self.s._do_use(arg["element"]))
+            except DesyncError as e:
+                resyncs += 1
+                if resyncs > 2: self.say("error", f"voyage interrompu : {e}"); return False
+                self.say("warn", f"{e} — reconnexion ({resyncs}/2)")
+                if not self.s.reconnect(): self.say("error", "reconnexion impossible"); return False
+                prev = None; continue
             except RuntimeError as e:
                 if kind == "side" and ("case de sortie" in str(e) or "carte voisine" in str(e)) and blocked_retries < 3:
                     block_edge(cur, arg); blocked_retries += 1; prev = None   # this border cannot be crossed on foot: remember it and plan another way

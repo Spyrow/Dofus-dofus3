@@ -390,7 +390,9 @@ class Session:
             if path: cands.append((0 if c in learned else 1, len(path), c, path))
         if not cands: raise RuntimeError(f"aucune case de sortie atteignable ({side})")
         cands.sort(key=lambda x: x[:3])
+        unconfirmed = 0
         for n, (_pref, _len, cell, path) in enumerate(cands[:4]):
+            if unconfirmed >= 2: raise autopilot.DesyncError("le serveur refuse tous les déplacements : position désynchronisée")
             if self.my_cell != cell: path, _ = self.plan(cell)
             if not path: continue
             try:
@@ -400,6 +402,7 @@ class Session:
                     self._remember_exit(start_map, side, cell); time.sleep(1.0); return
                 if self.status != "connected": raise
                 self.log("warn", f"trajet vers la case de sortie {cell} refusé : {err}")
+                if "(jnz)" in str(err): unconfirmed += 1
                 continue
             if self.map_id != start_map and self._mapchanged.is_set():   # some borders change the map as soon as the exit cell is reached
                 self.log("info", f"la carte a changé en marchant sur la case de sortie {cell}"); self._remember_exit(start_map, side, cell); time.sleep(1.0); return
@@ -715,6 +718,20 @@ class Session:
                 self.log("error", f"Aucune donnée de personnage après {CONNECT_TIMEOUT} s : le serveur ne répond pas"); stop.set()
         threading.Thread(target=watchdog, daemon=True).start()
         return True
+
+    def reconnect(self, timeout=90):
+        """Drop the game connection and open a new one (the server then tells us the real position). Does NOT stop the autopilot.
+        -> True once connected again."""
+        self.log("warn", "Reconnexion pour resynchroniser la position")
+        self._stop.set()
+        end = time.time() + 20
+        while self.status in ("connecting", "connected") and time.time() < end: time.sleep(0.3)
+        time.sleep(3)      # let the game server release the character
+        if not self.start(): return False
+        end = time.time() + timeout
+        while self.status == "connecting" and time.time() < end: time.sleep(0.3)
+        if self.status == "connected": time.sleep(3); return True      # let the map and the actors load
+        return False
 
     def stop(self):
         self.auto.stop()

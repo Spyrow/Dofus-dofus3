@@ -8,7 +8,7 @@ import hashlib, json, os, threading, time, urllib.error, urllib.request
 import store
 
 CONFIG = os.path.join(os.path.dirname(store.PATH), "groq.json")
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 MIN_INTERVAL = 1.2    # seconds between two calls (free tier rate limits)
 _lock = threading.Lock(); _last = 0.0; _cache = {}
 
@@ -58,8 +58,10 @@ def chat_json(system, user, max_tokens=300, timeout=25):
         if wait > 0: time.sleep(wait)
         _last = time.time()
     base = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
-    body = json.dumps({"model": cfg["model"], "temperature": 0.1, "max_tokens": max_tokens, "response_format": {"type": "json_object"},
-                       "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}).encode()
+    payload = {"model": cfg["model"], "temperature": 0.1, "max_tokens": max_tokens, "response_format": {"type": "json_object"},
+               "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+    if "gpt-oss" in cfg["model"]: payload["reasoning_effort"] = "low"; payload["max_tokens"] = max_tokens + 1500   # reasoning tokens count in the limit
+    body = json.dumps(payload).encode()
     req = urllib.request.Request(base + "/chat/completions", data=body, method="POST",
                                  headers={"Authorization": "Bearer " + cfg["api_key"], "Content-Type": "application/json", "User-Agent": "dofus-net-bot/1.0"})
     try:
