@@ -131,7 +131,7 @@ class DesyncError(RuntimeError):
 class Autopilot:
     def __init__(self, sess):
         self.s = sess; self.explore = 0; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.quest_id = None; self.kinds = {"talk", "fight", "craft"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False; self.fight_played = False; self._stuck = []; self._hinted = set()
-        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}; self._start_tried = set(); self._prefer_words = set(); self._explored = set(); self._steps_taken = collections.deque(maxlen=40)
+        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}; self._start_tried = set(); self._prefer_words = set(); self._explored = set(); self._escorts = set(); self._steps_taken = collections.deque(maxlen=40)
 
     # ---- control ----
     def start(self, kinds=None, llm=False, quest_id=None):
@@ -146,7 +146,7 @@ class Autopilot:
                 if quest_id not in self.s.quests: return False
         self.quest_id = quest_id
         self.kinds = set(kinds or ("talk", "fight", "craft")); self.llm = bool(llm) and guide.available(); self.llm_steps = 0; self._hinted = set()
-        self.on = True; self.goal = None; self._stop = threading.Event(); self.attempts.clear(); self._start_tried = set(); self._explored = set(); self._deaths0 = getattr(self.s, "deaths", 0)
+        self.on = True; self.goal = None; self._stop = threading.Event(); self.attempts.clear(); self._start_tried = set(); self._explored = set(); self._escorts = set(); self._deaths0 = getattr(self.s, "deaths", 0)
         self._thread = threading.Thread(target=self._run, daemon=True); self._thread.start()
         return True
 
@@ -609,6 +609,25 @@ class Autopilot:
             return self._world(self.s.map_id) == world
         self.say("warn", f"aucun portail connu de {here} vers {world}"); return False
 
+    def _start_escort(self, qid, oid, text, target):
+        """"Escorter Nowa et le livrer au chef Badufron": the NPC who must follow is named in the text and is not where the objective ends. Talk to him
+        first (once per run), so that he follows, then the usual travel goes to the objective's map. -> True if a talk was done."""
+        import questreport
+        if oid in self._escorts: return False
+        for npc, ids, maps in questreport.npcs_in_text(text):
+            if target in maps: continue          # the one the escort ends with (the chief)
+            reach = distances(self.s.map_id); ok = [m for m in maps if m == self.s.map_id or m in reach]
+            if not ok: self.say("warn", f"{npc} (à escorter) est hors de portée"); continue
+            tgt = min(ok, key=lambda m: reach.get(m, 0))
+            self.say("info", f"escorte : je vais d'abord parler à {npc} (carte {tgt})")
+            if self.s.map_id != tgt and not self._travel(tgt): continue
+            actor = next((a for i in ids for a in [self._find_npc(i)] if a is not None), None)
+            if actor is None: self.say("warn", f"{npc} introuvable sur la carte {tgt}"); continue
+            try: self._act(f"Parler au PNJ {actor}", lambda: self.s._do_talk(actor))
+            except RuntimeError as e: self.say("warn", f"dialogue impossible : {e}"); continue
+            self._dialog(); self._escorts.add(oid); self._sleep(1.5); return True
+        return False
+
     def _follow_guide_npcs(self, qid, oid):
         """An objective "talk to the occupants of ..." needs a chain of talks the objective does not spell out: do them in the order the scraped guide
         names the NPCs (a bartender, then a drinker, then someone upstairs), choosing the replies the guide quotes. -> True once the objective is done."""
@@ -618,10 +637,13 @@ class Autopilot:
         if not seq: return False
         done = lambda: not self.s.quests.get(qid, (None, {}))[1].get(oid, False)
         self.say("info", f"guide de « {name} » : PNJ à voir dans l'ordre : " + ", ".join(n for n, _i, _m in seq))
+        o = gamedata.quest_data("objectives", oid) or {}
+        near = distances(int(o["map"])) if o.get("map") else None      # only the NPCs around the objective: the later steps of the guide (the militia, the councillor) are not for now
         for npc, ids, maps in seq:
             if not self._alive(): return False
+            if near is not None: maps = [m for m in maps if near.get(m, 99) <= 3]
             reach = distances(self.s.map_id); ok = [m for m in maps if m == self.s.map_id or m in reach]
-            if not ok: self.say("info", f"guide : {npc} hors de portée"); continue
+            if not ok: self.say("info", f"guide : {npc} trop loin de l'objectif ou hors de portée, je le laisse"); continue
             tgt = min(ok, key=lambda m: reach.get(m, 0))
             if self.s.map_id != tgt and not self._travel(tgt): continue
             actor = next((a for i in ids for a in [self._find_npc(i)] if a is not None), None)
@@ -661,10 +683,11 @@ class Autopilot:
         text = gamequests.objective_text(oid); self.goal = f"{text} (carte {target})"
         self.attempts[oid] += 1
         self.say("info", f"objectif : {self.goal} — essai {self.attempts[oid]}/{FREE_ATTEMPTS}")
+        if re.match(r"\s*(escort|accompagn|guider|conduire)", text.lower()) and self._start_escort(qid, oid, text, target): pass
         if self.s.map_id != target and route(self.s.map_id, target) is None and not self._discover(target): return False
         if not self._travel(target): return False
         time.sleep(2.0)
-        if re.match(r"\s*(parler|discuter|retourner|aller voir)", text.lower()):       # free-text "talk to ..." objective: the NPC is named in the text
+        if re.match(r"\s*(parler|discuter|retourner|aller voir|escort|accompagn|guider|conduire)", text.lower()):       # free-text "talk to ..." objective (an escort ends with a talk to the chief): the NPC is named in the text
             if self._talk_npcs(qid, oid, text) or self._follow_guide_npcs(qid, oid): return True
             self.say("warn", "objectif non validé après avoir parlé aux PNJ de la carte"); return self.attempts[oid] < FREE_ATTEMPTS
         words = [w for w in re.findall(r"[a-zéèêàç]{4,}", text.lower()) if w not in ("lire", "utiliser", "contant", "légende", "dans", "avec")]
@@ -1065,10 +1088,15 @@ class Autopilot:
         return self.discover_tries[goal] < 2 and bool(self._discover_maps(goal))
 
     def _discover(self, goal):
-        """No known route to `goal`: visit the maps around it and probe their unknown doors until a route appears."""
+        """No known route to `goal`: visit the maps around it and probe their unknown doors until a route appears. A door that leads to a new map close
+        to the goal (a house of the same square) is explored from the inside before going back: the goal may be a room of that building."""
         self.discover_tries[goal] += 1
         self.say("info", f"aucune route vers {goal} : découverte automatique des portes sur les cartes voisines")
-        for mid in self._discover_maps(goal):
+        done = set()
+        for _round in range(12):
+            cands = [m for m in self._discover_maps(goal) if m not in done]
+            if not cands or not self._alive(): break
+            mid = cands[0]; done.add(mid)
             for _ in range(12):
                 if not self._alive(): return False
                 if self.s.map_id != mid:
@@ -1077,7 +1105,9 @@ class Autopilot:
                 if not self.s.probe_doors():
                     self.say("info", f"carte {mid} : plus de porte à essayer"); break
                 if route(self.s.map_id, goal) is not None or self.s.map_id == goal: self.say("event", "route trouvée vers l'objectif"); return True
-                self.say("info", "porte apprise mais ce n'est pas la bonne : retour et poursuite de la découverte")
+                self.say("info", "porte apprise mais ce n'est pas la bonne : j'explore ce nouveau bâtiment avant de poursuivre")
+                done.discard(self.s.map_id)      # the new map is a candidate too (it is reachable now): it comes first when it is on the goal's square
+                break
         return route(self.s.map_id, goal) is not None
 
     def _travel(self, goal):

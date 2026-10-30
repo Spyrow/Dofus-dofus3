@@ -504,25 +504,56 @@
   },
   "1959": {
    "name": "On marche sur des œufs",
-   "seen": 95,
+   "seen": 108,
    "steps": {
     "2629": {
      "name": "On marche sur des œufs",
      "objectives": {
       "13851": "Entrer dans la taverne d'Astrub",
-      "13852": "Parler avec les occupants de la taverne pour attirer l'attention d'un trafiquant"
+      "13852": "Parler avec les occupants de la taverne pour attirer l'attention d'un trafiquant",
+      "13853": "Aller voir Nowa",
+      "13854": "Vaincre x1 Nowa en un seul combat",
+      "13855": "Escorter Nowa et le livrer au chef Badufron",
+      "13856": "Aller voir Conseillère Archie"
+     }
+    }
+   }
+  },
+  "1973": {
+   "name": "Souffre-douleur",
+   "seen": 10,
+   "steps": {
+    "2644": {
+     "name": "Souffre-douleur",
+     "objectives": {
+      "14050": "Aller voir Brigitte Sarimavek",
+      "14051": "Aller voir Hande Molle",
+      "14052": "Aller voir Brigitte Sarimavek",
+      "14053": "Aller voir Lame Dansante",
+      "14054": "Vaincre x1 Lame Dansante en un seul combat",
+      "14055": "Aller voir Brigitte Sarimavek",
+      "14056": "Aller voir Saketsu",
+      "14057": "Vaincre x1 Lame Écorcheuse en un seul combat",
+      "14058": "Aller voir Saketsu",
+      "14059": "Chercher des chachas strubiens"
      }
     }
    }
   },
   "1975": {
    "name": "Ça tombe à l'eau",
-   "seen": 2,
+   "seen": 42,
    "steps": {
     "2635": {
      "name": "Ça tombe à l'eau",
      "objectives": {
-      "13952": "Découvrir la carte : Étang d'Astrub"
+      "13952": "Découvrir la carte : Étang d'Astrub",
+      "13953": "Chercher l'origine des troubles",
+      "13954": "Discuter avec les mercenaires",
+      "13955": "Aller voir Didier Jean",
+      "13956": "Aller voir Conseillère Archie",
+      "13957": "Aller voir Didier Jean",
+      "13958": "Aller voir Tek Abir"
      }
     }
    }
@@ -537,6 +568,18 @@
       "13767": "Aller voir Maître Anemo",
       "13768": "Aller voir Envoyée des Douze",
       "13931": "Utiliser le portail pour se rendre à Astrub sur le Monde des Douze"
+     }
+    }
+   }
+  },
+  "2009": {
+   "name": "Conseil de classe",
+   "seen": 19,
+   "steps": {
+    "2631": {
+     "name": "Conseil de classe",
+     "objectives": {
+      "13890": "Aller voir Saketsu"
      }
     }
    }
