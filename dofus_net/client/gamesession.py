@@ -84,7 +84,9 @@ class Session:
         elif t == gamestate.JOW:
             mid = next((v for f, v in parse(body) if f == 1 and isinstance(v, int)), None)
             self._map_changed_at = time.time()
-            with self._lock: self.map_id, self.my_cell, self.actors, self.npcs, self.elements, self.groups = mid, None, {}, {}, {}, {}
+            with self._lock:
+                self._left_map = self.map_id
+                self.map_id, self.my_cell, self.actors, self.npcs, self.elements, self.groups = mid, None, {}, {}, {}, {}
             self._mapchanged.set()
         elif t in (login.JNJ, login.JNS):      # jnj {3: [entry]} / jns {1: entry}; entry = {1: actor id, 2: {3: cell, 4: direction}, 3: ...}
             for f, v in parse(body):
@@ -160,7 +162,9 @@ class Session:
         aid = aid - (1 << 64) if aid >= 1 << 63 else aid
         with self._lock:
             self.actors[aid] = cell
-            if aid == self.char_id: self.my_cell = cell
+            if aid == self.char_id:
+                first = self.my_cell is None; self.my_cell = cell
+                if first: self._note_arrival(cell)
             tpl = gamequests.npc_template(entry) if aid < 0 else None
             if tpl: self.npcs[aid] = tpl
             elif aid < 0 and not self.in_fight:
@@ -431,13 +435,44 @@ class Session:
         else:
             raise RuntimeError("aucun changement de carte après l'utilisation de l'élément (mauvaise case d'utilisation ?)")
 
-    def _do_step(self, cell):
-        """Walk onto a trigger cell: the server loads the next map by itself (learned passage, see gamedoors.record_step)."""
-        frm = self.map_id
-        self._mapchanged.clear()
-        if self.my_cell != cell: self._do_go(cell)
-        if not self._mapchanged.wait(8): raise RuntimeError("aucun changement de carte en marchant sur la case-déclencheur")
-        time.sleep(1.0)
+    def _note_arrival(self, cell):
+        """First position on a new map. An interior (no border exit) is left next to where we arrive: remember that cell as a guess of the way back."""
+        left = getattr(self, "_left_map", None); mid = self.map_id
+        if not left or not mid or left == mid: return
+        def work():
+            try:
+                m = gamemaps.load(mid)
+                if m and not any(gamemaps.exit_cells(m, s) for s in ("right", "bottom", "left", "top")):
+                    if gamedoors.record_guess(mid, cell, left): self.log("info", f"Intérieur {mid} : sortie probable près de la case d'arrivée {cell}")
+            except Exception: pass
+        threading.Thread(target=work, daemon=True).start()
+
+    def _guess_cells(self, cell, radius=3):
+        """Walkable cells around `cell`, nearest first (the cell itself first)."""
+        m = self.mapdata()
+        if not m: return [cell]
+        x0, y0 = gamemaps.to_xy(cell); out = []
+        for c in range(gamemaps.CELLS):
+            if not gamemaps.walkable(m, c): continue
+            x, y = gamemaps.to_xy(c); d = max(abs(x - x0), abs(y - y0))
+            if d <= radius: out.append((d, c))
+        return [c for _d, c in sorted(out)]
+
+    def _do_step(self, cell, guess=False):
+        """Walk onto a trigger cell: the server loads the next map by itself (learned passage, see gamedoors.record_step).
+        A guessed cell (interior exit deduced from the arrival cell) is tried with its neighbours; the one that works is recorded."""
+        frm = self.map_id; prev = frm
+        tries = self._guess_cells(cell) if guess else [cell]
+        for n, c in enumerate(tries[:14]):
+            self._mapchanged.clear()
+            if self.my_cell != c:
+                try: self._do_go(c)
+                except RuntimeError: continue
+            if self._mapchanged.wait(8 if not guess else 3.5):
+                to = self.map_id
+                if guess: gamedoors.record_step(frm, c, to); self.log("event", f"Sortie de {frm} trouvée : case {c} (supposée {cell})")
+                time.sleep(1.0); return
+        raise RuntimeError("aucun changement de carte en marchant sur la case-déclencheur" + (" (essai des cases voisines de l'arrivée)" if guess else ""))
 
     def use_element(self, element, stand=None):
         return self.start_action(f"Utiliser l'élément {element}", lambda: self._do_use(element, stand))

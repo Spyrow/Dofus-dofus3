@@ -344,7 +344,7 @@ class Autopilot:
             prev = cur
             try:
                 if kind == "side": self._act(f"Changer de carte ({arg})", lambda: self.s._do_change_map(arg))
-                elif arg.get("kind") == "step": self._act(f"Marcher sur la case {arg['cell']}", lambda: self.s._do_step(arg["cell"]))
+                elif arg.get("kind") == "step": self._act(f"Marcher sur la case {arg['cell']}", lambda: self.s._do_step(arg["cell"], bool(arg.get("guess"))))
                 else: self._act(f"Utiliser l'élément {arg['element']}", lambda: self.s._do_use(arg["element"]))
             except RuntimeError as e:
                 if kind == "side" and ("case de sortie" in str(e) or "carte voisine" in str(e)) and blocked_retries < 3:

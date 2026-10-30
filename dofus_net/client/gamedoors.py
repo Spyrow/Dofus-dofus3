@@ -42,6 +42,21 @@ def record(frm, skill, element, cell, to, stand=None):
         return changed
 
 
+def record_guess(frm, cell, to):
+    """Interior maps: we arrive next to the exit, so the cell we appeared on is a good first guess of the trigger cell back to `to`
+    (flagged "guess" until a real passage confirms it). Nothing is added when a way back is already known. -> True if added."""
+    if not frm or not to or frm == to: return False
+    with _lock:
+        d = load(); lst = d.setdefault(int(frm), [])
+        if any(e.get("to") == to for e in lst): return False
+        lst.append({"kind": "step", "guess": True, "element": None, "skill": None, "cell": cell, "to": to, "stand": None})
+        os.makedirs(os.path.dirname(PATH), exist_ok=True)
+        tmp = PATH + ".tmp"
+        with open(tmp, "w", encoding="utf8") as f: json.dump({str(k): v for k, v in d.items()}, f, indent=1)
+        os.replace(tmp, PATH)
+        return True
+
+
 def record_step(frm, cell, to):
     """A trigger cell: walking onto `cell` of map `frm` makes the server load map `to` (no itz / joc involved). -> True if new."""
     if not frm or not to or frm == to: return False
@@ -49,9 +64,10 @@ def record_step(frm, cell, to):
         d = load(); lst = d.setdefault(int(frm), [])
         for e in lst:
             if e.get("kind") == "step" and e.get("cell") == cell:
-                if e.get("to") == to: return False
-                e["to"] = to; break
+                if e.get("to") == to and not e.get("guess"): return False
+                e["to"] = to; e.pop("guess", None); break
         else: lst.append({"kind": "step", "element": None, "skill": None, "cell": cell, "to": to, "stand": None})
+        lst[:] = [e for e in lst if not (e.get("guess") and e.get("to") == to)]      # the real trigger cell replaces any guess
         os.makedirs(os.path.dirname(PATH), exist_ok=True)
         tmp = PATH + ".tmp"
         with open(tmp, "w", encoding="utf8") as f: json.dump({str(k): v for k, v in d.items()}, f, indent=1)
