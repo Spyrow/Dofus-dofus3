@@ -204,5 +204,38 @@
    "to": 153881600,
    "stand": null
   }
+ ],
+ "152829956": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 438,
+   "to": 152829952,
+   "stand": null
+  }
+ ],
+ "152830976": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 426,
+   "to": 152829956,
+   "stand": null
+  }
+ ],
+ "152830980": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 381,
+   "to": 152830976,
+   "stand": null
+  }
  ]
 }

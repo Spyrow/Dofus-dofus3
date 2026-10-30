@@ -18,6 +18,7 @@ FIGHT_TYPES = {6, 7, 13, 14, 16}
 MAX_ATTEMPTS = 3
 FIGHT_REPLY = re.compile(r"combat|affront|battr|d[ée]fi|attaqu|[ée]prouve|provoqu", re.I)   # replies that start a boss fight
 FIGHT_ATTEMPTS = 8        # fights allowed per objective (an objective may need several)
+DUNGEON_WORDS = ("crypte", "tombeau", "donjon")
 MAX_LLM_STEPS = 12         # actions suggested by the guide per run
 MAX_SEARCH_MAPS = 25      # maps visited while looking for monsters
 REST_SECONDS = 8          # pause between two fights
@@ -148,6 +149,7 @@ class Autopilot:
                     except RuntimeError as e: self.say("warn", f"combat impossible : {e}"); break
                     time.sleep(REST_SECONDS); continue
                 if self.s.dialog: self._dialog(); continue
+                if self._dungeon_step(): continue
                 obj, why = self._pick()
                 if obj is None and time.time() - self._last_sync > 20:   # the server does not push the next step by itself: ask for the fresh state, once in a while
                     self._last_sync = time.time()
@@ -170,6 +172,21 @@ class Autopilot:
             self.say("error", f"{type(e).__name__}: {e}")
         finally:
             self.on = False; self.goal = None; self.say("info", "arrêté")
+
+    def _dungeon_step(self):
+        """Inside a dungeon (no way out on foot, name says crypt / tomb / dungeon) the way on is through the fights: the bot cannot walk out.
+        Attack the closest monster group, whatever its size (dungeons are built that way). -> True if a fight was started."""
+        info = gamedata.map_info(self.s.map_id) if self.s.map_id else None
+        if not info or not any(w in (info["subarea"] or "").casefold() for w in DUNGEON_WORDS): return False
+        with self.s._lock: groups = {a: list(ms) for a, ms in self.s.groups.items()}; actors = dict(self.s.actors); me = self.s.my_cell
+        if not groups or me is None: return False
+        from fightbot import dist as cell_dist
+        actor = min(groups, key=lambda a: cell_dist(me, actors.get(a, me)))
+        self.say("info", f"donjon « {info['subarea']} » : j'attaque le groupe {actor} ({len(groups[actor])} monstre(s))")
+        try: self._act(f"Donjon : combat contre le groupe {actor}", lambda: self.s._do_attack(actor, max_group=99))
+        except RuntimeError as e: self.say("warn", f"combat de donjon impossible : {e}"); return False
+        time.sleep(REST_SECONDS)
+        return True
 
     def _world(self, map_id):
         mi = gamedata.map_info(map_id) if map_id else None

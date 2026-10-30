@@ -578,12 +578,13 @@ class Session:
     def use_element(self, element, stand=None):
         return self.start_action(f"Utiliser l'élément {element}", lambda: self._do_use(element, stand))
 
-    def _do_attack(self, actor):
+    def _do_attack(self, actor, max_group=None):
         """Walk next to a monster group, attack it (hms) and play the whole fight with fightbot."""
         with self._lock: cell = self.actors.get(actor); mons = list(self.groups.get(actor, []))
         m = self.mapdata()
         if cell is None or not m: raise RuntimeError("groupe introuvable sur la carte")
-        if len(mons) > fightbot.MAX_GROUP: raise RuntimeError(f"groupe trop gros ({len(mons)} monstres, max {fightbot.MAX_GROUP})")
+        limit = fightbot.MAX_GROUP if max_group is None else max_group
+        if len(mons) > limit: raise RuntimeError(f"groupe trop gros ({len(mons)} monstres, max {limit})")
         x, y = gamemaps.to_xy(cell)
         adjacent = {gamemaps.from_xy(x + dx, y + dy) for dx, dy in gamemaps.DIRS} - {None}
         if self.my_cell not in adjacent:
