@@ -12,6 +12,7 @@ import gamedata, gamedoors, gamequests, guide, knowledge, questbook, store
 GRAPH_PATH = os.path.join(os.path.dirname(store.PATH), "mapgraph.json")
 SIDES = ("top", "bottom", "left", "right")
 TALK_TYPES = {1, 9}
+FREE_ATTEMPTS = 8                   # free-text objectives may hide a specific dialog branch: more tries (each walks other replies)
 USE_TYPES = {0, 8}                  # "read the book", "use ...": an interactive element of the objective's map
 FIGHT_TYPES = {6, 7, 13, 14, 16}
 MAX_ATTEMPTS = 3
@@ -93,7 +94,7 @@ def pick_reply(replies, prefer=None):
 
 class Autopilot:
     def __init__(self, sess):
-        self.s = sess; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.kinds = {"talk", "fight"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False
+        self.s = sess; self.explore = 0; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.kinds = {"talk", "fight"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False
         self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter()
 
     # ---- control ----
@@ -170,7 +171,7 @@ class Autopilot:
                 if o.get("map") and here and self._world(int(o["map"])) not in (None, here): continue      # another zone: not our business now
                 if o.get("type") in TALK_TYPES | USE_TYPES and o.get("map"):
                     tgt = int(o["map"])
-                    if self.attempts[oid] >= MAX_ATTEMPTS: unsupported = unsupported or f"objectif « {text} » : échec après {MAX_ATTEMPTS} essais"
+                    if self.attempts[oid] >= (FREE_ATTEMPTS if o.get("type") in USE_TYPES else MAX_ATTEMPTS): unsupported = unsupported or f"objectif « {text} » : échec après {self.attempts[oid]} essais"
                     elif self.s.map_id != tgt and route(self.s.map_id, tgt) is None and not self._can_discover(tgt):
                         unsupported = unsupported or f"objectif « {text} » : aucune route connue (porte non apprise ?)"
                     else: cands.append((0 if self.s.map_id == tgt else reach.get(tgt, 30), qid, oid))
@@ -317,20 +318,39 @@ class Autopilot:
     def _use_objective(self, qid, oid, target):
         text = gamequests.objective_text(oid); self.goal = f"{text} (carte {target})"
         self.attempts[oid] += 1
-        self.say("info", f"objectif : {self.goal} — essai {self.attempts[oid]}/{MAX_ATTEMPTS}")
+        self.say("info", f"objectif : {self.goal} — essai {self.attempts[oid]}/{FREE_ATTEMPTS}")
         if self.s.map_id != target and route(self.s.map_id, target) is None and not self._discover(target): return False
         if not self._travel(target): return False
         time.sleep(2.0)
+        if re.match(r"\s*(parler|discuter|retourner|aller voir)", text.lower()):       # free-text "talk to ..." objective: the NPC is named in the text
+            with self.s._lock: npcs = dict(self.s.npcs)
+            low = text.lower()
+            named = [a for a, t in npcs.items() if (gamedata.quest_data("npcs", t) or "~").lower() in low]
+            order = named or sorted(npcs)         # no name in the text (a nickname): talk to the NPCs of the map one after the other
+            self.explore = max(0, self.attempts[oid] - 1)
+            for actor in order[:6]:
+                if not self._alive(): return False
+                try: self._act(f"Parler au PNJ {actor}", lambda: self.s._do_talk(actor))
+                except RuntimeError as e: self.say("warn", f"dialogue impossible : {e}"); continue
+                self._dialog(); time.sleep(1.5)
+                try: self.s.sync_quests()
+                except Exception: pass
+                t0 = time.time()
+                while self._alive() and time.time() - t0 < 4:
+                    if not self.s.quests.get(qid, (None, {}))[1].get(oid, False): self.explore = 0; self.say("info", "objectif accompli"); return True
+                    time.sleep(0.3)
+            self.explore = 0
+            self.say("warn", "objectif non validé après avoir parlé aux PNJ de la carte"); return self.attempts[oid] < FREE_ATTEMPTS
         words = [w for w in re.findall(r"[a-zéèêàç]{4,}", text.lower()) if w not in ("lire", "utiliser", "contant", "légende", "dans", "avec")]
         done = lambda: not self.s.quests.get(qid, (None, {}))[1].get(oid, False)
         try: ok = self.s.use_recorded(oid, done) or self.s.use_for_objective(words, done)
-        except RuntimeError as e: self.say("warn", f"utilisation impossible : {e}"); return self.attempts[oid] < MAX_ATTEMPTS
+        except RuntimeError as e: self.say("warn", f"utilisation impossible : {e}"); return self.attempts[oid] < FREE_ATTEMPTS
         if not ok:
             try: self.s.sync_quests()
             except Exception: pass
             ok = done()
         if ok: self.say("info", "objectif accompli"); return True
-        self.say("warn", "objectif non validé après l'essai des éléments de la carte"); return self.attempts[oid] < MAX_ATTEMPTS
+        self.say("warn", "objectif non validé après l'essai des éléments de la carte"); return self.attempts[oid] < FREE_ATTEMPTS
 
     def _objective(self, qid, oid):
         o = gamedata.quest_data("objectives", oid); npc_id, target = int(o["p"][0]), int(o["map"])
@@ -418,11 +438,11 @@ class Autopilot:
         self.say("error", "voyage trop long, abandon"); return False
 
     def _dialog(self):
-        for _ in range(30):
+        for depth in range(30):
             d = self.s.dialog
             if not d or not self._alive(): return
             replies = d.get("replies") or []
-            if not replies: time.sleep(1.5); return
+            if not replies: time.sleep(1.5); self.s.close_dialog(); return
             d = self.s._dlg or {}
             r = questbook.suggest_reply(d.get("npc"), d.get("map"), d.get("path", []), replies, self.s._active_objectives(), REFUSE)
             src = "livre de quêtes" if r else "heuristique"
@@ -431,6 +451,8 @@ class Autopilot:
                 npc = gamedata.quest_data("npcs", d.get("npc")) if d.get("npc") else None
                 g, why = guide.choose_reply(quest, npc, (self.s.dialog or {}).get("text"), replies)
                 if g: r, src = g, f"Groq : {why}"
+            if r is None and self.explore:       # retry of a free-text talk objective: walk other branches of the dialog (reply index shifts with the attempt and the depth)
+                r = replies[(self.explore + depth) % len(replies)]; src = f"exploration {self.explore}"
             r = r or pick_reply(replies, FIGHT_REPLY if self.want_fight else None)
             self.say("info", f"réponse ({src}) : « {r['text']} »")
             try: self._act(f"Répondre ({r['id']})", lambda: self.s._do_reply(r["id"]))

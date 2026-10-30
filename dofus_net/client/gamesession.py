@@ -335,9 +335,11 @@ class Session:
         """Send jok for `path`, wait for the server's jnz and the walking time, then confirm with jny."""
         keys = gamemaps.movement_keys(path)
         self._moved.clear(); self._mapchanged.clear()
-        self._send(login.JOK, f_bytes(1, b"".join(enc_varint(k) for k in keys)) + f_varint(2, self.map_id))
-        self.log("action", f"→ jok : {len(path) - 1} cases, de {path[0]} à {path[-1]}")
-        if not self._moved.wait(3): raise RuntimeError("le serveur n'a pas confirmé le déplacement (jnz)")
+        for attempt in range(2):     # after a refused request (joc, itz...) the server swallows the first move: send it once more
+            self._send(login.JOK, f_bytes(1, b"".join(enc_varint(k) for k in keys)) + f_varint(2, self.map_id))
+            self.log("action", f"→ jok : {len(path) - 1} cases, de {path[0]} à {path[-1]}" + (" (2e envoi)" if attempt else ""))
+            if self._moved.wait(3): break
+        else: raise RuntimeError("le serveur n'a pas confirmé le déplacement (jnz)")
         end = time.time() + gamemaps.duration(path)
         while time.time() < end:
             if self._stop.is_set(): raise RuntimeError("déconnecté")
@@ -651,6 +653,16 @@ class Session:
             for ts, t, b in self.recent:
                 if ts >= t0 and str(t) not in seen and t not in ("knb", None): seen[str(t)] = b.hex()[:48]
             raise RuntimeError("le PNJ n'a pas répondu (reçu : " + ("; ".join(f"{t}={h or '-'}" for t, h in seen.items()) or "rien") + ")")
+
+    def close_dialog(self):
+        """A dialog that stays open without replies (a one-line NPC) blocks every move: close it like the real client does (kiq)."""
+        if not self.dialog: return
+        try: self._send("kiq")
+        except RuntimeError: return
+        for _ in range(10):
+            if not self.dialog: return
+            time.sleep(0.2)
+        with self._lock: self.dialog = None
 
     def _do_reply(self, rid):
         if not self.dialog or rid not in [r["id"] for r in self.dialog.get("replies", [])]: raise RuntimeError("réponse indisponible")
