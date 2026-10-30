@@ -274,7 +274,11 @@ class Autopilot:
             hint = questbook.get_hint(oid)
             if hint is None:
                 info = gamedata.map_info(here) if here else None
-                hint, err = guide.quest_hint(quest, text, f"{info['subarea']} [{info['x']}, {info['y']}]" if info else None)
+                qd = gamedata.quest_data("quests", qid) or {}
+                with self.s._lock: step_id = (self.s.quests.get(qid) or (None,))[0]
+                sd = gamedata.quest_data("steps", step_id) or {} if step_id is not None else {}
+                hint, err = guide.quest_hint(quest, text, f"{info['area']} / {info['subarea']} [{info['x']}, {info['y']}]" if info else None,
+                                             qd.get("level"), sd.get("name"), sd.get("desc"))
                 if err: self.say("warn", f"indice Groq indisponible : {err}"); continue
                 if hint: questbook.record_hint(oid, qid, hint)
             if not hint: self.say("info", f"Groq ne connaît pas d'indice pour « {text} »"); continue

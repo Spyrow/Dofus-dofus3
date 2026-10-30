@@ -16,10 +16,12 @@ SYSTEM_PLAN = ("Tu guides un bot qui joue à Dofus 3. À partir de l'état fourn
                "talk {npc}, change_map {side}, use_element {element}, go_map {map_id}, attack {group}, stop {}. "
                "N'utilise que des identifiants présents dans l'état. Si rien de sûr n'est possible, renvoie stop. "
                "Réponds uniquement par un objet JSON: {\"actions\": [{\"action\": \"...\", ...}], \"why\": \"<explication courte en français>\"}.")
-SYSTEM_HINT = ("Tu connais Dofus (jeu français, Dofus 3) et ses quêtes. Un bot est bloqué sur un objectif de quête sans lieu précis. Dis où aller: "
-               "la sous-zone et les coordonnées [x, y] de la carte, et le nom du PNJ ou de l'élément à utiliser si tu le sais. "
-               "N'invente rien: si tu n'es pas sûr, mets null. "
-               "Réponds uniquement par un objet JSON: {\"subarea\": <nom ou null>, \"x\": <entier ou null>, \"y\": <entier ou null>, "
+SYSTEM_HINT = ("Tu es expert de Dofus Unity (Dofus 3, la version Unity du MMORPG Ankama, en français), de ses quêtes, PNJ, zones et cartes. "
+               "Un bot est bloqué sur un objectif d'une quête précise. On te donne le nom EXACT de la quête, son niveau, l'étape en cours (nom et description), "
+               "l'objectif et la position actuelle du bot. Réponds avec précision pour CETTE quête de Dofus Unity (pas une autre quête au nom proche, pas Dofus 2 "
+               "si c'est différent): la sous-zone et les coordonnées [x, y] de la carte où agir, et le nom exact du PNJ ou de l'élément à utiliser. "
+               "N'invente rien: si tu n'es pas sûr d'une information, mets null. "
+               "Réponds uniquement par un objet JSON: {\"subarea\": <nom de la sous-zone ou null>, \"x\": <entier ou null>, \"y\": <entier ou null>, "
                "\"npc\": <nom ou null>, \"why\": \"<explication courte en français>\"}.")
 ACTIONS = {"talk": "npc", "change_map": "side", "use_element": "element", "go_map": "map_id", "attack": "group", "stop": None}
 
@@ -67,11 +69,12 @@ def plan(state, instruction=None):
     return actions, str(out.get("why") or "")[:240]
 
 
-def quest_hint(quest, objective, position):
+def quest_hint(quest, objective, position, level=None, step=None, step_desc=None):
     """What Groq knows about where to solve a quest objective -> ({subarea, x, y, npc, why} or {} if it knows nothing, error or None).
     Coordinates are checked later against the real maps; here they are only normalised."""
     if not available(): return {}, "clé Groq non configurée"
-    user = json.dumps({"quête": quest, "objectif": objective, "position_actuelle_du_bot": position}, ensure_ascii=False)
+    user = json.dumps({"jeu": "Dofus Unity (Dofus 3)", "nom_exact_de_la_quête": quest, "niveau_de_la_quête": level, "étape_en_cours": step,
+                       "description_de_l_étape": step_desc, "objectif": objective, "position_actuelle_du_bot": position}, ensure_ascii=False)
     try: out = groq.chat_json(SYSTEM_HINT, user, max_tokens=250)
     except groq.GroqError as e: return {}, str(e)
     def num(v):
