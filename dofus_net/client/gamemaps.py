@@ -15,7 +15,7 @@ WIDTH, HEIGHT, CELLS = 14, 20, 560
 DIRS = [(1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1), (0, 1)]
 EXIT_BIT = {"right": 1, "bottom": 4, "left": 16, "top": 64}
 DIR_DIAG_BITS = {"right": 1 | 2 | 128, "bottom": 4 | 2 | 8, "left": 16 | 8 | 32, "top": 64 | 32 | 128}   # edge corners count for both sides
-STEP_SECONDS = 0.14      # observed ~0.11-0.14 s per cell on foot; slower is safer (the server checks the confirmation delay)
+STEP_SECONDS = 0.25      # observed ~0.11-0.14 s per cell on foot; slower is safer (the server checks the confirmation delay)
 
 DATA_DIR = os.path.dirname(store.PATH)
 INDEX_PATH = os.path.join(DATA_DIR, "mapindex.json")

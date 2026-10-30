@@ -111,6 +111,17 @@
    }
   ]
  },
+ "hints": {
+  "9818": {
+   "last": 1793360705,
+   "npc": "Stèle du vestige",
+   "qid": 1640,
+   "subarea": "Champs d'Incarnam",
+   "why": "C'est l'emplacement indiqué pour examiner la stèle du vestige dans la zone Champs d'Incarnam, aux coordonnées [-2,-4].",
+   "x": -2,
+   "y": -4
+  }
+ },
  "quests": {
   "1632": {
    "name": "Le village dans les nuages",
@@ -149,7 +160,7 @@
   },
   "1635": {
    "name": "Dans la gueule du Milimilou",
-   "seen": 37,
+   "seen": 52,
    "steps": {
     "2255": {
      "name": "Dans la gueule du Milimilou",
@@ -175,7 +186,7 @@
   },
   "1640": {
    "name": "Des vestiges de légende",
-   "seen": 33,
+   "seen": 48,
    "steps": {
     "2260": {
      "name": "Des vestiges de légende",
@@ -281,7 +292,7 @@
   },
   "1648": {
    "name": "Des chafers qui marchent",
-   "seen": 140,
+   "seen": 155,
    "steps": {
     "2268": {
      "name": "Des chafers qui marchent",
@@ -297,7 +308,7 @@
   },
   "1649": {
    "name": "Produits naturels",
-   "seen": 203,
+   "seen": 218,
    "steps": {
     "2269": {
      "name": "Produits naturels",
@@ -311,7 +322,7 @@
   },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 203,
+   "seen": 218,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",
