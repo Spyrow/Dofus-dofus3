@@ -372,7 +372,7 @@
   },
   "1648": {
    "name": "Des chafers qui marchent",
-   "seen": 341,
+   "seen": 412,
    "steps": {
     "2268": {
      "name": "Des chafers qui marchent",
@@ -381,7 +381,10 @@
       "9853": "Vaincre x1 Chafer Furtif en un seul combat",
       "9854": "Vaincre x1 Chafer Éclaireur en un seul combat",
       "9855": "Vaincre x1 Chafer Piquier en un seul combat",
-      "9856": "Découvrir la carte : Tombeau de Percy Klop"
+      "9856": "Découvrir la carte : Tombeau de Percy Klop",
+      "9857": "Vaincre x1 Percy Klop en un seul combat",
+      "9858": "Ramener à Capitaine des Kerubims : x1 Sac de Bijoux",
+      "9859": "Fouiller la tombe"
      }
     }
    }
@@ -403,9 +406,47 @@
     }
    }
   },
+  "1650": {
+   "name": "La hache et la pioche",
+   "seen": 23,
+   "steps": {
+    "2270": {
+     "name": "La hache et la pioche",
+     "objectives": {
+      "9871": "Fabriquer 1 Planche Agglomérée et fermer l'interface",
+      "9872": "Fabriquer 1 Ferrite et fermer l'interface",
+      "9873": "Montrer à Berb Nhin : 1 Planche Agglomérée",
+      "9874": "Montrer à Berb Nhin : 1 Ferrite"
+     }
+    }
+   }
+  },
+  "1651": {
+   "name": "Boune un jour, boune toujours",
+   "seen": 11,
+   "steps": {
+    "2271": {
+     "name": "Boune un jour, boune toujours",
+     "objectives": {
+      "9875": "Fabriquer 1 Le S'Mesme et fermer l'interface",
+      "9877": "Fabriquer 1 Le Plussain et fermer l'interface",
+      "9878": "Fabriquer 1 Les Incrustes et fermer l'interface",
+      "9879": "Fabriquer 1 La Spamette et fermer l'interface",
+      "9880": "Fabriquer 1 La Cape S'loque et fermer l'interface",
+      "9881": "Fabriquer 1 Le Floude et fermer l'interface",
+      "9882": "Montrer à Berb Nhin : 1 Le S'Mesme",
+      "9883": "Montrer à Berb Nhin : 1 Le Plussain",
+      "9884": "Montrer à Berb Nhin : 1 Les Incrustes",
+      "9885": "Montrer à Berb Nhin : 1 La Spamette",
+      "9886": "Montrer à Berb Nhin : 1 La Cape S'loque",
+      "9887": "Montrer à Berb Nhin : 1 Le Floude"
+     }
+    }
+   }
+  },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 404,
+   "seen": 475,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",
@@ -432,12 +473,30 @@
   },
   "2512": {
    "name": "Le métier des aventuriers",
-   "seen": 151,
+   "seen": 161,
    "steps": {
     "3193": {
      "name": "Le métier des aventuriers",
      "objectives": {
-      "19260": "Fabriquer 1 Bouillon de Chair et fermer l'interface"
+      "19260": "Fabriquer 1 Bouillon de Chair et fermer l'interface",
+      "19261": "Montrer à Berb Nhin : 1 Bouillon de Chair"
+     }
+    }
+   }
+  },
+  "2513": {
+   "name": "Préparation au combat",
+   "seen": 13,
+   "steps": {
+    "3194": {
+     "name": "Préparation au combat",
+     "objectives": {
+      "19264": "Fabriquer 1 La Halte Efkat et fermer l'interface",
+      "19265": "Fabriquer 1 Bounihimée et fermer l'interface",
+      "19266": "Montrer à Berb Nhin : 1 La Halte Efkat",
+      "19267": "Montrer à Berb Nhin : 1 Bounihimée",
+      "19268": "Fabriquer 1 Clef de la Crypte de Kardorim et fermer l'interface",
+      "19269": "Montrer à Berb Nhin : 1 Clef de la Crypte de Kardorim"
      }
     }
    }

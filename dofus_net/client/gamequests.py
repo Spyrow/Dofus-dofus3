@@ -31,6 +31,18 @@ def npc_template(entry):
     return _int(sub, 7) if sub is not None else None
 
 
+def finished_quests(body):
+    """ICA body -> set of the quest ids already completed ({5: [{1: 1, 2: quest id}]})."""
+    out = set()
+    try:
+        for f, v in parse(body):
+            if f == 5 and isinstance(v, bytes):
+                q = _int(v, 2)
+                if q is not None: out.add(q)
+    except (ValueError, IndexError): pass
+    return out
+
+
 def quest_state(body):
     """ICJ body or one ICA 'active' entry -> (quest id, step id, {objective id: in progress}) or None."""
     q = _sub(body, 1) if _int(body, 1) is None else body

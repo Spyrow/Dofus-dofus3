@@ -164,7 +164,7 @@
    "element": 489328,
    "cell": null,
    "to": 153355268,
-   "stand": 329
+   "stand": 316
   },
   {
    "skill": 14094,
@@ -405,6 +405,235 @@
    "cell": 373,
    "to": 152836096,
    "stand": null
+  }
+ ],
+ "153884672": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 327,
+   "to": 154010370,
+   "stand": null
+  }
+ ],
+ "153884930": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 354,
+   "to": 154010370,
+   "stand": null
+  }
+ ],
+ "153355266": [
+  {
+   "kind": "step",
+   "element": null,
+   "skill": null,
+   "cell": 385,
+   "to": 153879810,
+   "stand": null
+  }
+ ],
+ "153879810": [
+  {
+   "skill": 17524,
+   "element": 489325,
+   "cell": null,
+   "to": 153355266,
+   "stand": 343
+  }
+ ],
+ "153879812": [
+  {
+   "skill": 17444,
+   "element": 489324,
+   "cell": null,
+   "to": 153355264,
+   "stand": 344
+  },
+  {
+   "skill": 17443,
+   "element": 489338,
+   "cell": null,
+   "to": 153358338,
+   "stand": 212
+  }
+ ],
+ "153880325": [
+  {
+   "skill": 20680,
+   "element": 537815,
+   "cell": null,
+   "to": 153880324,
+   "stand": 485
+  }
+ ],
+ "153358338": [
+  {
+   "skill": 27200,
+   "element": 489561,
+   "cell": null,
+   "to": 153357314,
+   "stand": 505
+  },
+  {
+   "skill": 27199,
+   "element": 490391,
+   "cell": null,
+   "to": 153879812,
+   "stand": 389
+  }
+ ],
+ "153357314": [
+  {
+   "skill": 7047,
+   "element": 489559,
+   "cell": null,
+   "to": 153357312,
+   "stand": 187
+  },
+  {
+   "skill": 7053,
+   "element": 489562,
+   "cell": null,
+   "to": 153358338,
+   "stand": 361
+  }
+ ],
+ "153357312": [
+  {
+   "skill": 7043,
+   "element": 489560,
+   "cell": null,
+   "to": 153357314,
+   "stand": 501
+  }
+ ],
+ "153355264": [
+  {
+   "kind": "step",
+   "element": null,
+   "skill": null,
+   "cell": 313,
+   "to": 153879812,
+   "stand": null
+  }
+ ],
+ "153355272": [
+  {
+   "kind": "step",
+   "element": null,
+   "skill": null,
+   "cell": 382,
+   "to": 153879300,
+   "stand": null
+  }
+ ],
+ "153879300": [
+  {
+   "skill": 14032,
+   "element": 489333,
+   "cell": null,
+   "to": 153355272,
+   "stand": 343
+  }
+ ],
+ "153889792": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 272,
+   "to": 153879812,
+   "stand": null
+  }
+ ],
+ "153890050": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 247,
+   "to": 153879812,
+   "stand": null
+  }
+ ],
+ "153354240": [
+  {
+   "kind": "step",
+   "element": null,
+   "skill": null,
+   "cell": 409,
+   "to": 153880323,
+   "stand": null
+  },
+  {
+   "skill": 12478,
+   "element": 489674,
+   "cell": null,
+   "to": 153880323,
+   "stand": 297
+  }
+ ],
+ "153880323": [
+  {
+   "skill": 20727,
+   "element": 489510,
+   "cell": null,
+   "to": 153354240,
+   "stand": 455
+  }
+ ],
+ "153879298": [
+  {
+   "skill": 14136,
+   "element": 489334,
+   "cell": null,
+   "to": 153354248,
+   "stand": 369
+  }
+ ],
+ "153354248": [
+  {
+   "skill": 12514,
+   "element": 489335,
+   "cell": null,
+   "to": 153879298,
+   "stand": 327
+  }
+ ],
+ "153881090": [
+  {
+   "skill": 4428,
+   "element": 508995,
+   "cell": null,
+   "to": 153356288,
+   "stand": 375
+  }
+ ],
+ "153356288": [
+  {
+   "kind": "step",
+   "guess": true,
+   "element": null,
+   "skill": null,
+   "cell": 397,
+   "to": 153881090,
+   "stand": null
+  },
+  {
+   "skill": 1931,
+   "element": 489506,
+   "cell": null,
+   "to": 153486340,
+   "stand": 356
   }
  ]
 }

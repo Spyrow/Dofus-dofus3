@@ -100,7 +100,7 @@ def element_positions(map_id):
 def element_cells(map_id):
     """-> {interactive element id: cell} for the elements the bundle gives a cellId (resources: confirmed against the itw message of a
     harvest; workshops and doors have none); {} when unknown. Cached next to the cell data."""
-    map_id = int(map_id); path = os.path.join(CACHE_DIR, f"{map_id}.cells.json")
+    map_id = int(map_id); path = os.path.join(CACHE_DIR, f"{map_id}.cells3.json")
     try:
         with open(path, encoding="utf8") as f: return {int(k): v for k, v in json.load(f).items()}
     except (OSError, ValueError): pass
@@ -120,10 +120,15 @@ def element_cells(map_id):
         if o.type.name != "MonoBehaviour" or o.peek_name() != f"map_{map_id}": continue
         for r in o.read_typetree()["references"]["RefIds"]:
             d = r.get("data") or {}; e = d.get("<interactiveId>k__BackingField"); c = d.get("cellId")
-            if e and isinstance(c, int) and c >= 0: out[e] = c
+            if e and isinstance(c, int) and 0 < c < CELLS - 1: out[e] = c      # cells 0 and 559 (the corners) are default values, seen on several maps for trees
     os.makedirs(CACHE_DIR, exist_ok=True)
     with open(path, "w", encoding="utf8") as f: json.dump({str(k): v for k, v in out.items()}, f)
     return out
+
+
+def estimate_cell(pos):
+    """Cell under a sprite at pixel `pos` (exact for the three animated elements whose cell the server announced; static elements are only close)."""
+    return min(range(CELLS), key=lambda c: (cell_center(c)[0] - pos[0] - 623.5) ** 2 + (cell_center(c)[1] - 505.25 + pos[1]) ** 2)
 
 
 def cell_center(cell):
@@ -133,16 +138,17 @@ def cell_center(cell):
 
 
 def stand_candidates(m, pos, limit=8, reach=150):
-    """Walkable cells most likely to be the use-cell of an element at pixel `pos` (static elements have no cell in the map data). Skills are used
-    from a direct neighbour (distance 1) of the element's cell; that cell is estimated at (x + 615.5, 565 - y) px (fitted on 19 uses of the real
-    client, so only a hint: ~13 of them have the real use-cell among the first 3 candidates). Direct neighbours of the estimated cell come first,
-    then the nearest cells by pixel distance."""
-    tx, ty = pos[0] + 615.5, 565.25 - pos[1]
-    cells = [(c, (cell_center(c)[0] - tx) ** 2 + (cell_center(c)[1] - ty) ** 2) for c in range(CELLS) if walkable(m, c)]
+    """Walkable cells most likely to be the use-cell of an element at pixel `pos` (static elements have no cell in the map data). A skill is used from
+    a direct neighbour of the element's cell (distance 1). That cell is estimated at (x + 615.5, 541.25 - y) px, fitted on 42 uses learned from the real
+    client: the true use-cell is the first candidate in 18 cases, among the first 3 in 32 and among the first 5 in 37. Direct neighbours of the
+    estimated cell come first (nearest to the estimate first), then the other cells by pixel distance."""
+    tx, ty = pos[0] + 615.5, 541.25 - pos[1]
+    d2 = lambda c: (cell_center(c)[0] - tx) ** 2 + (cell_center(c)[1] - ty) ** 2
+    est = min(range(CELLS), key=d2); ex, ey = to_xy(est)
+    cells = [c for c in range(CELLS) if walkable(m, c)]
     if not cells: return []
-    est = min(cells, key=lambda t: t[1])[0]; ex, ey = to_xy(est)
     def direct(c): x, y = to_xy(c); return abs(x - ex) + abs(y - ey) == 1
-    return [c for c, d in sorted(cells, key=lambda t: (not direct(t[0]), t[1])) if d ** 0.5 <= reach + 120 or direct(c)][:limit]
+    return [c for c in sorted(cells, key=lambda c: (not direct(c), d2(c))) if direct(c) or d2(c) ** 0.5 <= reach + 120][:limit]
 
 
 def _read_bundle(map_id):
@@ -183,13 +189,13 @@ def exit_cells(m, side):
 
 
 def can_step(m, a, b):
-    """Is the step a -> b (adjacent cells) allowed? A map can hold sunken / raised areas (altitude, linkedZone) joined by a ramp (moveZone = 1 cells):
-    the altitude only changes along the ramp. In the real client's paths (about 330 steps over two captures) every step that changes altitude
-    has both cells on the ramp; the steps the server refuses are the ones that leave a ramp sideways (204 -> 203 on map 154010374, 329 -> 328
-    on map 154010113)."""
+    """Is the step a -> b (adjacent cells) allowed? A map can hold sunken / raised areas: cells of another `linkedZone` (zone 16 against the usual 17)
+    joined to the rest by a ramp (cells with moveZone = 1). Inside a zone any altitude change is fine (the real client walks from -10 to 0); crossing
+    from a zone to another needs both cells on the ramp, or the same altitude. Checked on ~340 steps of the real client (none breaks it) and on the
+    steps the server refuses (204 -> 203 on map 154010374, 329 -> 328 on map 154010113)."""
     ca, cb = m["cells"][a], m["cells"][b]
-    if len(ca) < 6 or len(cb) < 6: return True
-    return ca[5] == cb[5] or bool(ca[4] and cb[4])
+    if len(ca) < 6 or len(cb) < 6 or ca[3] == cb[3]: return True
+    return bool(ca[4] and cb[4]) or ca[5] == cb[5]
 
 
 def find_path(m, start, goal, blocked=(), diagonals_only=False):

@@ -7,6 +7,7 @@ the API only returns labels and timestamps. Adding an account uses pkce_login (c
 close the Ankama launcher first, and only one login can run at a time).
 """
 import argparse, json, os, re, sys, threading, time
+from urllib.parse import parse_qs, urlparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -99,6 +100,11 @@ class H(BaseHTTPRequestHandler):
             else: self._json(data)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/boost", p):
             self._json(gamesession.session(m[1]).boost_view())
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/questreport", p):     # ?area=Incarnam : finished / active / still to do, with the scraped guide
+            import questreport
+            sess = gamesession.session(m[1]); area = (parse_qs(urlparse(self.path).query).get("area") or ["Incarnam"])[0]
+            with sess._lock: fin = set(sess.finished_quests); act = set(sess.quests)
+            self._json({"live": sess.status == "connected", "area": area, "finished_known": len(fin), **questreport.report(fin, act, area)})
         elif m := re.fullmatch(r"/api/accounts/(\w+)/quests", p):
             self._json(gamesession.session(m[1]).questview())
         elif p == "/api/groq":
@@ -174,6 +180,15 @@ class H(BaseHTTPRequestHandler):
             except (TypeError, ValueError): return self._json({"error": "bad request"}, 400)
             stand = body.get("stand"); stand = int(stand) if isinstance(stand, (int, float)) and 0 <= stand < 560 else None
             err = gamesession.session(m[1]).use_element(n, stand)
+            self._json({"error": err} if err else {"ok": True}, 409 if err else 202)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/achievements", p):
+            sess = gamesession.session(m[1])
+            if sess.status != "connected": return self._json({"error": "personnage non connecté"}, 409)
+            sess.claim_achievements_later(); self._json({"ok": True}, 202)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/equip", p):    # {"item": item id}
+            try: n = int(body.get("item"))
+            except (TypeError, ValueError): return self._json({"error": "bad request"}, 400)
+            err = gamesession.session(m[1]).equip(n)
             self._json({"error": err} if err else {"ok": True}, 409 if err else 202)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/(harvest|craft)", p):    # {"element": id} / {"item": result item id, "count": n}
             try:

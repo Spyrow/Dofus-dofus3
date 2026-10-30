@@ -8,7 +8,7 @@ closed (a second session on the same account kicks the first, in both directions
 Chat: the chat messages are NOT decoded yet (none in the captures so far): `Session.chat` stays empty until gamestate
 learns the message; see add_chat()."""
 import collections, json, os, threading, time
-import boost, knowledge, accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, gamejobs, autopilot, fightbot, questbook, login
+import boost, knowledge, accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, gamejobs, gameachievements, autopilot, fightbot, questbook, login
 from wire import parse, dec_varint, enc_varint, f_bytes, f_varint, request
 from haapi import create_game_token, GAME_IDS
 
@@ -43,11 +43,15 @@ class Session:
         self._map_changed_at = 0.0   # time of the last jow
         self._trace = None   # list of (time, 'S'|'C', message, hex) while a fight is being recorded (see _do_attack)
         self._icj_events = {}; self._dlg = None; self._done = collections.deque(maxlen=60)   # dialog being recorded; (time, quest, objective) accomplished lately
-        self.npcs = {}; self.quests = {}; self.dialog = None   # actor id -> template id; quest id -> (step, objectives); open dialog
+        self.finished_quests = set(); self.npcs = {}; self.quests = {}; self.dialog = None   # actor id -> template id; quest id -> (step, objectives); open dialog
         self._dialog_event = threading.Event(); self.recent = collections.deque(maxlen=200)   # (time, message type) of everything received
         self._act = threading.Lock(); self.busy = None; self._moved = threading.Event(); self._mapchanged = threading.Event()
         self._stop = threading.Event(); self._thread = None; self._lock = threading.RLock()
-        self.equipped = set()   # item ids worn at login (positions come with the inventory; equipping itself is not implemented)
+        self.equipped = set()   # item ids worn (login inventory, then iqn)
+        self._equip_evt = threading.Event(); self._equip_want = None; self.achievements = {}; self._claimed = []; self._claimed_evt = threading.Event()
+        self.arrival_cell = None   # first cell on the current map: the door we came through is next to it
+        self.arrival_inside = False   # True when we came in through a door / trigger cell (not across a border): only then is the arrival cell next to a door
+        self._last = {}            # what the client last sent: {"jok": (time, map, last cell), "itz": (time, map, skill, element, stand), "joc": time, "hms": time}
         self.inv = {}; self.jobxp = {}; self.unavailable = {}   # stack uid -> [item id, quantity]; job id -> {xp, floor, next}; element id -> time until which it gives nothing
         self._harvest_started, self._harvest_end = threading.Event(), threading.Event()
         self._craft_open, self._table_event, self._crafted_event, self._craft_closed = (threading.Event() for _ in range(4)); self._craft_skill = None
@@ -95,7 +99,11 @@ class Session:
             self._map_changed_at = time.time()
             with self._lock:
                 self._left_map = self.map_id
+                self.arrival_inside = False
+                try: self._learn_passage(self.map_id, mid)
+                except Exception as e: self.log("warn", f"apprentissage du passage impossible : {e}")
                 self.map_id, self.my_cell, self.actors, self.npcs, self.elements, self.groups = mid, None, {}, {}, {}, {}
+                self.arrival_cell = None
             self._mapchanged.set()
         elif t in (login.JNJ, login.JNS):      # jnj {3: [entry]} / jns {1: entry}; entry = {1: actor id, 2: {3: cell, 4: direction}, 3: ...}
             for f, v in parse(body):
@@ -108,6 +116,7 @@ class Session:
         elif t == login.JWP:
             self.log("event", "Combat terminé")
         elif t == login.ICA:
+            with self._lock: self.finished_quests = gamequests.finished_quests(body)
             with self._lock: self.quests = {q: (st, objs) for q, st, objs in gamequests.active_quests(body)}
             for q, (st, objs) in list(self.quests.items()): self._book_quest(q, st, objs)
             self.log("event", f"Quêtes en cours : {len(self.quests)}")
@@ -173,7 +182,7 @@ class Session:
             self.actors[aid] = cell
             if aid == self.char_id:
                 first = self.my_cell is None; self.my_cell = cell
-                if first: self._note_arrival(cell)
+                if first: self.arrival_cell = cell; self._note_arrival(cell)
             tpl = gamequests.npc_template(entry) if aid < 0 else None
             if tpl: self.npcs[aid] = tpl
             elif aid < 0 and not self.in_fight:
@@ -209,6 +218,10 @@ class Session:
             e = gamejobs._sub(body, 1); el, cell, state = gamejobs._int(e, 3), gamejobs._int(e, 4), gamejobs._int(e, 5)
             with self._lock:
                 if el in self.elements and cell is not None: self.elements[el]["cell"] = cell
+            if cell is not None and el is not None and self.map_id:
+                with knowledge._lock:
+                    d = knowledge.load("element_cells.json", {}); m = d.setdefault(str(self.map_id), {})
+                    if m.get(str(el)) != cell: m[str(el)] = cell; knowledge.save("element_cells.json", d)
             if state in (1, 2) and el is not None: self.unavailable[el] = time.time() + 45   # being harvested / growing back
         elif t == gamejobs.ITV:
             if gamejobs._int(body, 4) == self.char_id: self._harvest_started.set()
@@ -224,6 +237,20 @@ class Session:
                 lvl = gamejobs.level_of(xp["floor"], 0)
                 self.log("event", f"{name} : {xp['xp']} / {xp['next']} XP" + (f" (niveau {lvl})" if lvl else "") +
                          (" — niveau supérieur !" if old and xp["floor"] > old["floor"] else ""))
+        elif t == gamejobs.IQN:      # iqn {1: item uid, 3: position}: worn (1 = weapon...) or back in the bag (63)
+            uid, pos = _vi(body, 1), _vi(body, 3)
+            with self._lock:
+                gid = (self.inv.get(uid) or [None])[0]
+                if gid is not None:
+                    if pos in (None, gamestate.NOT_EQUIPPED): self.equipped.discard(gid)
+                    else: self.equipped.add(gid)
+            if self._equip_want == (uid, pos): self._equip_evt.set()
+        elif t == "mdp":
+            self.achievements = {a: pending for a, pending in gameachievements.listing(body)}
+            self.log("event", f"Succès : {len(self.achievements)} débloqués, {sum(self.achievements.values())} avec une récompense à réclamer")
+        elif t == "mdj":
+            a = _vi(body, 1); self._claimed.append(a); self._claimed_evt.set()
+            self.log("event", f"Succès validé : « {gameachievements.name(a)} »")
         elif t == gamejobs.JYZ: self._craft_skill = _vi(body, 1); self._craft_open.set()
         elif t == gamejobs.KCH: self._table_event.set()
         elif t == gamejobs.KBR: self._craft_closed.set()
@@ -245,26 +272,77 @@ class Session:
         """Walk next to a resource and harvest it once (itz): the server answers itv at once and itt about 3 s later. Loot and experience follow."""
         e = self.elements.get(element)
         if not e or not e.get("skill"): raise RuntimeError("ressource introuvable sur la carte")
+        mid = self.map_id; known = True
         cell = e.get("cell")
-        if cell is None:
-            cell = gamemaps.element_cells(self.map_id).get(element)
-            if cell is not None: e["cell"] = cell
-        if cell is None: raise RuntimeError("case de la ressource inconnue")
-        self._walk_next_to(cell)
-        self._harvest_started.clear(); self._harvest_end.clear()
-        t0 = time.time()
-        self._send(login.ITZ, f_varint(1, e["skill"]) + f_varint(3, element))
-        self.log("action", f"→ itz : récolte de l'élément {element} (compétence {e['skill']}, type {e.get('type')}) « {gamedata.get('interactives', e.get('interactive')) or '?'} » depuis la case {self.my_cell}, ressource en {cell}")
-        if not self._harvest_started.wait(3):
+        if cell is None: cell = knowledge.load("element_cells.json", {}).get(str(mid), {}).get(str(element))      # told by the server on an earlier harvest
+        if cell is None: cell = gamemaps.element_cells(mid).get(element)
+        if cell is None:        # trees have no cell in the map data: estimate it from the sprite position (exact for the animated elements measured)
+            pos = gamemaps.element_positions(mid).get(element)
+            if pos is None: raise RuntimeError("case de la ressource inconnue")
+            cell = min(range(gamemaps.CELLS), key=lambda c: (gamemaps.cell_center(c)[0] - pos[0] - 623.5) ** 2 + (gamemaps.cell_center(c)[1] - 505.25 + pos[1]) ** 2)
+            known = False
+        x, y = gamemaps.to_xy(cell)
+        ring = [gamemaps.from_xy(x + dx, y + dy) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1))]      # direct neighbours, then the diagonals
+        stands = []
+        for i, c in enumerate(ring):
+            if c is None: continue
+            path, _ = self.plan(c)
+            if path: stands.append((i >= 4, len(path), c))
+        stands = [c for _d, _l, c in sorted(stands)][:5 if known else 6]
+        if not stands: raise RuntimeError("aucune case accessible à côté de l'élément")
+        name = gamedata.get("interactives", e.get("interactive")) or "?"; t0 = time.time()
+        for n, stand in enumerate(stands):
+            if self.my_cell != stand:
+                path, _ = self.plan(stand)
+                if path and len(path) > 1: self._walk(path)
+            self._harvest_started.clear(); self._harvest_end.clear(); t0 = time.time()
+            self._send(login.ITZ, f_varint(1, e["skill"]) + f_varint(3, element))
+            self.log("action", f"→ itz : récolte de l'élément {element} « {name} » (compétence {e['skill']}) depuis la case {self.my_cell}, ressource en {cell}" + ("" if known else " (estimée)"))
+            if self._harvest_started.wait(3): break
+            self._unlock_after_use(self.my_cell)
+        else:
             self.unavailable[element] = time.time() + 60
             got = [f"{t}={b.hex()[:40]}" for ts, t, b in list(self.recent) if ts >= t0 and t not in ("knb", "jnz", None)]
-            self._unlock_after_use(self.my_cell)
-            raise RuntimeError("la ressource ne répond pas (déjà récoltée ?) ; reçu : " + (", ".join(got) or "rien"))
+            raise RuntimeError(f"la ressource ne répond depuis aucune des {len(stands)} cases essayées ; reçu : " + (", ".join(got) or "rien"))
         if not self._harvest_end.wait(15): raise RuntimeError("fin de récolte non reçue")
         time.sleep(0.8)   # the loot (isz / irx) and the experience (ipz) arrive right after itt
 
     def harvest(self, element):
         return self.start_action(f"Récolter l'élément {element}", lambda: self._do_harvest(element))
+
+    def _do_equip(self, gid, position=1):
+        """Wear an item: ito {1: 1, 2: uid, 3: position} (position 1 = the weapon slot, where the hunter's knife goes; the weapon already there goes
+        back to the bag by itself). The server confirms with iqn {1: uid, 3: position}."""
+        with self._lock: uid = next((u for u, (g, _q) in self.inv.items() if g == gid), None)
+        if uid is None: raise RuntimeError(f"« {gamejobs.item_name(gid)} » n'est pas dans l'inventaire")
+        if position == 1 and gid in self.equipped: self.log("info", f"« {gamejobs.item_name(gid)} » est déjà équipé"); return      # the server says nothing then
+        self._equip_evt.clear(); self._equip_want = (uid, position)
+        self._send(gamejobs.ITO, f_varint(1, 1) + f_varint(2, uid) + f_varint(3, position))
+        self.log("action", f"→ ito : équiper « {gamejobs.item_name(gid)} » (objet {uid}, emplacement {position})")
+        if not self._equip_evt.wait(4): raise RuntimeError("l'équipement n'a pas été confirmé (iqn)")
+        time.sleep(0.6)
+
+    def equip(self, gid):
+        return self.start_action(f"Équiper l'objet {gid}", lambda: self._do_equip(int(gid)))
+
+    def claim_achievements(self, wait=4.0):
+        """Validate the achievements: mdw {1: -1} claims every reward waiting; the server answers mdj per achievement. -> number claimed."""
+        if self.status != "connected": return 0
+        self._claimed = []; self._claimed_evt.clear()
+        self._send(gameachievements.MDW, f_varint(1, (1 << 64) - 1))      # -1 as a protobuf int64
+        self.log("action", "→ mdw : réclamer les récompenses des succès")
+        self._claimed_evt.wait(wait); time.sleep(1.5)
+        n = len(self._claimed)
+        self.log("info", f"Succès : {n} validé(s)" if n else "Succès : rien à réclamer")
+        return n
+
+    def claim_achievements_later(self, delay=0.0):
+        """Same, in the background (after a finished quest, or once connected)."""
+        def run():
+            time.sleep(delay)
+            try: self.claim_achievements()
+            except Exception as e: self.log("warn", f"succès : {e}")
+        threading.Thread(target=run, daemon=True).start()
 
     def workshop_elements(self, job, skill=None):
         """Elements of the current map that are workshops for a recipe: the element type is the recipe's skill (Four = 27 for the bread),
@@ -334,6 +412,7 @@ class Session:
         with self._lock:
             for q in gone: self.quests.pop(q, None)
         for q in gone: self.log("event", f"Quête terminée : « {(gamedata.quest_data('quests', q) or {}).get('name') or q} »")
+        if gone: self.claim_achievements_later(3.0)      # a finished quest often unlocks achievements
         return gone
 
     def guide_state(self):
@@ -483,6 +562,44 @@ class Session:
         if self.conn is None: raise RuntimeError("non connecté")
         self.trace("C", name, body)
         self.conn.send(request(name, body))
+        self._note_sent(name, body)
+
+    def _note_sent(self, name, body):
+        """Remember the last move / use / border change / attack: the next map change is explained by one of them (see _learn_passage)."""
+        now = time.time()
+        try:
+            if name == login.JOK:
+                raw = next((v for f, v in parse(body) if f == 1 and isinstance(v, bytes)), b""); i = 0; last = None
+                while i < len(raw): v, i = dec_varint(raw, i); last = v & 0xFFF
+                if last is not None: self._last["jok"] = (now, self.map_id, last)
+            elif name == login.ITZ:
+                stand = (self._last.get("jok") or (0, None, self.my_cell))[2] if self._last.get("jok") and self._last["jok"][1] == self.map_id else self.my_cell
+                self._last["itz"] = (now, self.map_id, _vi(body, 1), _vi(body, 3), stand)
+            elif name in (login.JOC, login.HMS): self._last["joc" if name == login.JOC else "hms"] = now
+        except (ValueError, IndexError): pass
+
+    def _learn_passage(self, prev, new):
+        """A map change nobody explained yet: remember it, whoever caused it (this also learns what the player does by hand in the UI).
+        An element used within 6 s = a door; a walk that ended within 12 s = a trigger cell; border changes (joc) and fights are skipped."""
+        if not prev or not new or prev == new: return
+        now = time.time(); L = self._last
+        if now - L.get("hms", 0) < 20 or now - L.get("joc", 0) < 12: return
+        if self.in_fight or time.monotonic() - self.fight.last_message_at < 40: return      # a fight map (start or end of a fight) is not a passage
+        itz = L.get("itz")
+        if itz and itz[1] == prev and now - itz[0] < 6:
+            self.arrival_inside = True
+            if gamedoors.record(prev, itz[2], itz[3], None, new, itz[4]): self.log("event", f"Passage appris : porte {itz[3]} de {prev} → {new} (depuis la case {itz[4]})")
+            return
+        jok = L.get("jok")
+        if jok and jok[1] == prev and now - jok[0] < 12:
+            m = gamemaps.load(prev)
+            if m and any(jok[2] in gamemaps.exit_cells(m, side) for side in ("top", "bottom", "left", "right")): return      # a border: the neighbour graph already has it
+            self.arrival_inside = True
+            if gamedoors.record_step(prev, jok[2], new): self.log("event", f"Passage appris : la case {jok[2]} de {prev} mène à {new}")
+
+    def _cancel(self):
+        """A stop was asked: the session is closing, or the autopilot that drives this action was stopped."""
+        return self._stop.is_set() or (self.auto.on and self.auto._stop.is_set())
 
     def _walk(self, path, attempts=3):
         """Send jok for `path`, wait for the server's jnz and the walking time, then confirm with jny."""
@@ -506,7 +623,7 @@ class Session:
             raise RuntimeError("le serveur n'a pas confirmé le déplacement (jnz)" + detail)
         end = time.time() + gamemaps.duration(path)
         while time.time() < end:
-            if self._stop.is_set(): raise RuntimeError("déconnecté")
+            if self._cancel(): raise RuntimeError("arrêt demandé")
             if self._mapchanged.is_set(): return   # the last cell was a trigger: the server already loaded the next map (no jny)
             time.sleep(0.05)
         self._send(login.JNY); self.log("action", "→ jny (déplacement terminé)")
@@ -515,7 +632,7 @@ class Session:
         """Walk a refused path one cell at a time; the cell the server refuses is remembered (knowledge/bad_cells.json, used by plan())."""
         self.log("warn", f"trajet refusé : marche case par case ({len(path) - 1} cases) pour trouver la case bloquante")
         for b in path[1:]:
-            if self._mapchanged.is_set() or self._stop.is_set(): return
+            if self._mapchanged.is_set() or self._cancel(): return
             try: self._walk([self.my_cell, b], attempts=1)
             except RuntimeError:
                 if self._mapchanged.is_set(): return
@@ -626,7 +743,7 @@ class Session:
                 if self._mapchanged.is_set(): break
                 time.sleep(0.2)
             else: return False
-        if self._mapchanged.wait(8):
+        if self._mapchanged.wait(4):      # a real door answers within a second (jow)
             time.sleep(1.0)
             new = gamedoors.record(frm, e["skill"], element, e["cell"], self.map_id, known.get("stand") if known else None)
             info = gamedata.map_info(self.map_id)
@@ -647,9 +764,15 @@ class Session:
         skills = {d.get("skill") for lst in gamedoors.load().values() for d in lst if d.get("skill")}
         with self._lock: els = dict(self.elements)
         # only skills already seen on real doors: other elements are resources (a harvest locks the character until it ends), workshops, zaaps...
-        order = sorted((e for e in els if e not in known and e in pos and (els[e].get("skill") in skills or els[e].get("type") == DOOR_TYPE)))   # every door has its own skill id: they share the element type
+        arr = self.arrival_cell if self.arrival_inside else None      # across a border the arrival cell says nothing about the doors
+        def man(a, b): (x, y), (X, Y) = gamemaps.to_xy(a), gamemaps.to_xy(b); return abs(x - X) + abs(y - Y)
+        order = sorted((e for e in els if e not in known and e in pos and (els[e].get("skill") in skills or els[e].get("type") in gamejobs.door_types())),   # every door has its own skill id: they share the element type
+                       key=lambda e: (man(gamemaps.estimate_cell(pos[e]), arr) if arr is not None else 0, e))      # the door we came through is next to where we arrived
         for e in order:
-            for c in gamemaps.stand_candidates(m, pos[e], max_cells):
+            near = sorted((c for c in range(gamemaps.CELLS) if arr is not None and gamemaps.walkable(m, c) and man(c, arr) <= 3), key=lambda c: (man(c, arr), c))[:5]
+            pred = [c for c in gamemaps.stand_candidates(m, pos[e], max_cells) if c not in near[:2]]
+            for c in near[:2] + pred + near[2:]:      # two cells next to the arrival first (the door we came through), then the predicted use-cells
+                if self._cancel(): return False
                 tried = knowledge.load(self.PROBE_FILE, {}).get(str(mid), {}).get(str(e), [])
                 if c in tried: continue
                 with knowledge._lock:
@@ -698,6 +821,7 @@ class Session:
                         ((bool(name(e)) and any(w in name(e).lower() for w in words)) if strict else (not name(e) or any(w in name(e).lower() for w in words)))),
                        key=lambda e: (not name(e), e))
         for e in order:
+            if self._cancel(): return False
             cells = (gamemaps.stand_candidates(m, pos[e], max_cells, 260) if e in pos else []) + [None]      # the current cell is the last resort
             for c in cells:
                 self.log("info", f"Objectif : utilisation de l'élément {e} « {name(e) or '?'} » depuis la case {c if c is not None else 'actuelle'}")
@@ -713,6 +837,7 @@ class Session:
         """First position on a new map. An interior (no border exit) is left next to where we arrive: remember that cell as a guess of the way back."""
         left = getattr(self, "_left_map", None); mid = self.map_id
         if not left or not mid or left == mid: return
+        if self.in_fight or time.monotonic() - self.fight.last_message_at < 40: return      # fight maps are not interiors
         def work():
             try:
                 m = gamemaps.load(mid)
@@ -738,6 +863,7 @@ class Session:
         frm = self.map_id; prev = frm
         tries = self._guess_cells(cell) if guess else [cell]
         for n, c in enumerate(tries[:14]):
+            if self._cancel(): raise RuntimeError("arrêt demandé")
             self._mapchanged.clear()
             if self.my_cell != c:
                 try: self._do_go(c)
@@ -956,7 +1082,7 @@ class Session:
                     with self._lock: self.character = name
                     self.log("event", f"Personnage : {name}")
                 elif t == gamestate.KRG and self.status != "connected":
-                    self.set_status("connected")
+                    self.set_status("connected"); self.claim_achievements_later(8.0)      # validate what is waiting once the world is loaded
                 elif t == gamestate.JOW:
                     mid = next((v for f, v in gamestate.parse(body) if f == 1 and isinstance(v, int)), None)
                     info = gamedata.map_info(mid) if mid else None

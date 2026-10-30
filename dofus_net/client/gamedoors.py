@@ -34,6 +34,8 @@ def record(frm, skill, element, cell, to, stand=None):
                 e.update(skill=skill, cell=cell if cell is not None else e.get("cell"), to=to, stand=stand if stand is not None else e.get("stand"))
                 break
         else: lst.append({"skill": skill, "element": element, "cell": cell, "to": to, "stand": stand}); changed = True
+        before = len(lst); lst[:] = [e for e in lst if not (e.get("guess") and e.get("to") == to)]      # a real passage replaces the exit guessed from the arrival cell
+        changed = changed or len(lst) != before
         if changed:
             os.makedirs(os.path.dirname(PATH), exist_ok=True)
             tmp = PATH + ".tmp"
@@ -84,6 +86,10 @@ def elements(jnj_body):
         e = dict(parse(v)); five = dict(parse(e[5])) if isinstance(e.get(5), bytes) else {}
         model = e.get(4) if isinstance(e.get(4), int) and e.get(4) < 1 << 40 else None
         if isinstance(e.get(6), int): out[e[6]] = {"skill": five.get(1), "interactive": model, "type": five.get(3), "cell": None}
+    for f, v in parse(jnj_body):          # field 2: the resources of the map with their real cell {3: element id, 4: cell} (doors and workshops are not listed)
+        if f == 2 and isinstance(v, bytes):
+            e = dict(parse(v))
+            if isinstance(e.get(3), int) and isinstance(e.get(4), int) and e[3] in out and 0 <= e[4] < 560: out[e[3]]["cell"] = e[4]
     return out
 
 
