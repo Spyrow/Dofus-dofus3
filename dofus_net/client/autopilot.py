@@ -94,7 +94,7 @@ def pick_reply(replies, prefer=None):
 
 class Autopilot:
     def __init__(self, sess):
-        self.s = sess; self.explore = 0; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.kinds = {"talk", "fight"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False
+        self.s = sess; self.explore = 0; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.kinds = {"talk", "fight"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False; self.fight_played = False
         self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter()
 
     # ---- control ----
@@ -277,6 +277,7 @@ class Autopilot:
         try: self._dialog()
         finally: self.want_fight = False
         if not self._alive(): return False
+        if self.fight_played: return True
         self._boss_played = False
         def fight(): self._boss_played = self.s._do_scripted_fight(t_talk)
         try: self._act("Combat de quête", fight)
@@ -438,6 +439,23 @@ class Autopilot:
         self.say("error", "voyage trop long, abandon"); return False
 
     def _dialog(self):
+        t_dialog = time.time()
+        try: self._dialog_steps()
+        finally: self.fight_played = self._dialog_fight(t_dialog)
+
+    def _dialog_fight(self, since):
+        """A reply may start a fight (the thief -> the evil fire...): play it here instead of letting the main loop stop on it."""
+        end = time.time() + 3
+        while not self.s.in_fight and time.time() < end and self._alive(): time.sleep(0.2)   # jxi can lag a little behind the end of the dialog
+        if not self.s.in_fight or not self._alive(): return False
+        self.say("info", "un combat a été déclenché par le dialogue : je le joue")
+        played = []
+        try: self._act("Combat de quête", lambda: played.append(self.s._do_scripted_fight(since)))
+        except RuntimeError as e: self.say("warn", f"combat impossible : {e}"); return False
+        time.sleep(REST_SECONDS)
+        return bool(played and played[0])
+
+    def _dialog_steps(self):
         for depth in range(30):
             d = self.s.dialog
             if not d or not self._alive(): return
