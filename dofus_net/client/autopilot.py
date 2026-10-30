@@ -7,7 +7,7 @@ It also stops when a fight starts, when the character disconnects, after MAX_ATT
 
 Travel uses %APPDATA%/dofus_net/mapgraph.json (tools/index_maps.py): {map id: [top, bottom, left, right] neighbour ids}."""
 import collections, json, os, re, threading, time, unicodedata
-import dpln, gamedata, gamedoors, gamejobs, gamequests, guide, knowledge, questbook, store
+import dpln, gamedata, gamedoors, gamejobs, gamemaps, gamequests, guide, knowledge, questbook, store
 
 GRAPH_PATH = os.path.join(os.path.dirname(store.PATH), "mapgraph.json")
 SIDES = ("top", "bottom", "left", "right")
@@ -22,6 +22,7 @@ MAX_GATHER_MAPS = 30
 MAX_HUNT_FIGHTS = 12                # fights allowed to collect one monster drop
 MAX_RECONNECTS = 5                  # reconnections after a dropped connection before the autopilot gives up
 MAX_DOOR_PROBES = 10                # unknown doors tried in one search for a resource
+MAX_BORDER_EXPLORES = 25            # maps whose unknown borders are tried in one run
 MAX_DEFEATS = 3                     # defeats allowed in one autopilot run before it stops (a dungeon fight that keeps being lost)
 MAX_ATTEMPTS = 3
 FIGHT_REPLY = re.compile(r"combat|affront|battr|d[ée]fi|attaqu|[ée]prouve|provoqu", re.I)   # replies that start a boss fight
@@ -59,16 +60,32 @@ def graph():
     return _graph
 
 
-def route(start, goal):
+def border_edges(cur):
+    """[(to, ('side', side))] from knowledge/border_targets.json: borders whose real neighbour is not the one in the map file (interiors)."""
+    out = []
+    for k, to in knowledge.load("border_targets.json", {}).items():
+        m, side = k.split(":")
+        if int(m) == int(cur): out.append((int(to), ("side", side)))
+    return out
+
+
+def route(start, goal, use_dead=True):
     """Shortest list of steps from map `start` to map `goal`, or None. A step is ('side', 'right'|'left'|'top'|'bottom') or
-    ('door', {skill, element, cell, to}) from the learned passages (gamedoors)."""
-    g = graph(); doors = gamedoors.load(); dead = blocked_edges(); start, goal = int(start), int(goal)
+    ('door', {skill, element, cell, to}) from the learned passages (gamedoors). Borders noted as blocked are avoided, but they are only a
+    guess (a failed walk): when nothing else leads there they are tried again."""
+    r = _route(start, goal, blocked_edges() if use_dead else {})
+    return r if r is not None or not use_dead or not blocked_edges() else _route(start, goal, {})
+
+
+def _route(start, goal, dead):
+    g = graph(); doors = gamedoors.load(); start, goal = int(start), int(goal)
     if start == goal: return []
     prev = {start: None}; queue = collections.deque([start])
     while queue:
         cur = queue.popleft()
         edges = [(nxt, ("side", side)) for side, nxt in zip(SIDES, g.get(cur, ())) if nxt and side not in dead.get(str(cur), ())]
         edges += [(int(d["to"]), ("door", d)) for d in doors.get(cur, ()) if d.get("to")]
+        edges += border_edges(cur)
         for nxt, step in edges:
             if nxt in prev: continue
             prev[nxt] = (cur, step)
@@ -81,12 +98,18 @@ def route(start, goal):
 
 
 def distances(start):
-    """BFS over maps (sides + learned doors): {map id: number of steps} from `start`."""
-    g = graph(); doors = gamedoors.load(); dead = blocked_edges(); start = int(start)
+    """BFS over maps (sides + learned doors): {map id: number of steps} from `start`. Blocked borders only count when nothing else is reachable."""
+    d = _distances(start, blocked_edges())
+    return d if len(d) > 1 or not blocked_edges() else _distances(start, {})
+
+
+def _distances(start, dead):
+    g = graph(); doors = gamedoors.load(); start = int(start)
     dist = {start: 0}; queue = collections.deque([start])
     while queue:
         cur = queue.popleft()
         nxts = [n for side, n in zip(SIDES, g.get(cur, ())) if n and side not in dead.get(str(cur), ())] + [int(d["to"]) for d in doors.get(cur, ()) if d.get("to")]
+        nxts += [to for to, _s in border_edges(cur)]
         for n in nxts:
             if n not in dist: dist[n] = dist[cur] + 1; queue.append(n)
     return dist
@@ -108,7 +131,7 @@ class DesyncError(RuntimeError):
 class Autopilot:
     def __init__(self, sess):
         self.s = sess; self.explore = 0; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.quest_id = None; self.kinds = {"talk", "fight", "craft"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False; self.fight_played = False; self._stuck = []; self._hinted = set()
-        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}; self._start_tried = set(); self._prefer_words = set(); self._steps_taken = collections.deque(maxlen=40)
+        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}; self._start_tried = set(); self._prefer_words = set(); self._explored = set(); self._steps_taken = collections.deque(maxlen=40)
 
     # ---- control ----
     def start(self, kinds=None, llm=False, quest_id=None):
@@ -123,7 +146,7 @@ class Autopilot:
                 if quest_id not in self.s.quests: return False
         self.quest_id = quest_id
         self.kinds = set(kinds or ("talk", "fight", "craft")); self.llm = bool(llm) and guide.available(); self.llm_steps = 0; self._hinted = set()
-        self.on = True; self.goal = None; self._stop = threading.Event(); self.attempts.clear(); self._start_tried = set(); self._deaths0 = getattr(self.s, "deaths", 0)
+        self.on = True; self.goal = None; self._stop = threading.Event(); self.attempts.clear(); self._start_tried = set(); self._explored = set(); self._deaths0 = getattr(self.s, "deaths", 0)
         self._thread = threading.Thread(target=self._run, daemon=True); self._thread.start()
         return True
 
@@ -174,12 +197,17 @@ class Autopilot:
                         try: self.s.sync_quests()
                         except Exception: pass
                         time.sleep(0.5); obj, why = self._pick()
+                    if obj is None and "aucune route" in (why or "") and self._explore_borders(): continue       # a way out nobody has used yet (interiors)
                     if obj is None and self.quest_id is None and self._start_new_quests(): continue
                     if obj is None:
                         if self.llm and self._unblock(): continue
                         if self.quest_id is None and self.llm and self.llm_steps < MAX_LLM_STEPS and self._ask_guide(why): continue
                         self.say("info", why); break
                     o = gamedata.quest_data('objectives', obj[1]) or {}
+                    tw = self._world(int(o["map"])) if o.get("map") else None
+                    if tw and self.s.map_id and tw != self._world(self.s.map_id):          # the objective is in another world: take the portal first
+                        if not self._change_world(tw):
+                            self.attempts[obj[1]] += 1; self.say("warn", f"impossible de rejoindre le monde « {tw} »"); time.sleep(1.0); continue
                     if not (self._fight_objective(*obj) if o.get('type') in FIGHT_TYPES else self._objective(*obj)):
                         self.say("info", f"objectif « {gamequests.objective_text(obj[1])} » abandonné" + ("" if self._alive() else " (arrêt demandé ou déconnexion)"))
                         if o.get('type') == CRAFT_TYPE and self._alive(): time.sleep(0.5); continue   # a craft that lacks a drop must not stop the other quests (_pick skips it after MAX_ATTEMPTS)
@@ -245,7 +273,7 @@ class Autopilot:
                         block(qid, oid, f"objectif « {text} » : échec après {self.attempts[oid]} essais")
                     elif o.get("map"):
                         tgt = int(o["map"])
-                        if self.s.map_id != tgt and route(self.s.map_id, tgt) is None and not self._can_discover(tgt):
+                        if self.s.map_id != tgt and route(self.s.map_id, tgt) is None and not self._can_discover(tgt) and not self._portal_to(tgt):
                             block(qid, oid, f"objectif « {text} » : aucune route connue (porte non apprise ?)")
                         else: cands.append((0 if self.s.map_id == tgt else reach.get(tgt, 30), qid, oid))
                     elif o.get("type") == 0:
@@ -257,7 +285,7 @@ class Autopilot:
                     tgt = self._discover_target(oid, qid)
                     if tgt is None: block(qid, oid, f"objectif « {text} » : carte inconnue (dis-moi où elle est)")
                     elif self.attempts[oid] >= MAX_ATTEMPTS: block(qid, oid, f"objectif « {text} » : échec après {self.attempts[oid]} essais")
-                    elif self.s.map_id != tgt and route(self.s.map_id, tgt) is None and not self._can_discover(tgt): block(qid, oid, f"objectif « {text} » : aucune route vers la carte {tgt}")
+                    elif self.s.map_id != tgt and route(self.s.map_id, tgt) is None and not self._can_discover(tgt) and not self._portal_to(tgt): block(qid, oid, f"objectif « {text} » : aucune route vers la carte {tgt}")
                     else: cands.append((0 if self.s.map_id == tgt else reach.get(tgt, 30), qid, oid))
                 elif o.get("type") == CRAFT_TYPE:
                     if not o.get("p") or not gamejobs.recipe(int(o["p"][0])): block(qid, oid, f"objectif « {text} » : recette inconnue")
@@ -532,6 +560,81 @@ class Autopilot:
             if not self.s.quests.get(qid, (None, {}))[1].get(oid, False): self.say("info", "objectif accompli"); return True
         self.say("warn", "carte atteinte mais l'objectif n'est pas validé"); return self.attempts[oid] < MAX_ATTEMPTS
 
+    # ---- changing world: a portal (NPCs), not a door ----
+    def _explore_borders(self):
+        """No route to an objective: try the borders of this map that no edge covers yet (the exit of an interior). Each map is tried once per run.
+        -> True if the character left the map."""
+        mid = self.s.map_id
+        if mid in self._explored or len(self._explored) >= MAX_BORDER_EXPLORES: return False
+        self._explored.add(mid)
+        m = self.s.mapdata()
+        if not m: return False
+        known = {s for s, n in zip(SIDES, graph().get(mid, ())) if n} | {k.split(":")[1] for k in knowledge.load("border_targets.json", {}) if k.split(":")[0] == str(mid)}
+        for side in SIDES:
+            if not gamemaps.exit_cells(m, side): continue
+            if side in known and (graph().get(mid, ()) or ())[SIDES.index(side)] in graph(): continue      # a normal border: the graph already follows it
+            self.say("info", f"aucune route : j'essaie de sortir par le bord « {side} » de la carte {mid}")
+            try: self._act(f"Explorer la sortie {side}", lambda: self.s._do_change_map(side))
+            except RuntimeError as e: self.say("warn", f"sortie {side} impossible : {e}"); continue
+            self.say("event", f"nouvelle carte : {self.s.map_id}"); self._sleep(2.0); return True
+        return False
+
+    def _portal_to(self, tgt):
+        """Is `tgt` in another world that a known portal leads to?"""
+        w, here = self._world(tgt), self._world(self.s.map_id)
+        return bool(w and here and w != here and any(p.get('from') == here and p.get('to') == w for p in knowledge.load('portals.json', [])))
+
+    def _change_world(self, world):
+        """The objective is in another world (Incarnam -> Astrub): walk to the portal listed in knowledge/portals.json and talk to its NPCs in order
+        (choosing the replies that name the portal). -> True when the character arrived in `world`."""
+        here = self._world(self.s.map_id)
+        for p in knowledge.load("portals.json", []):
+            if p.get("from") != here or p.get("to") != world: continue
+            tgt = int(p["map"])
+            self.say("info", f"changement de monde : {here} → {world} par le portail de la carte {tgt}")
+            if self.s.map_id != tgt and (route(self.s.map_id, tgt) is None or not self._travel(tgt)): self.say("warn", "portail hors de portée"); return False
+            self._prefer_words = {gamejobs.norm(w) for w in p.get("prefer", [])}
+            try:
+                for npc in p.get("talk", []):
+                    if not self._alive(): return False
+                    ids = gamedata.npc_ids_named(npc)
+                    actor = next((a for i in ids for a in [self._find_npc(i)] if a is not None), None)
+                    if actor is None: self.say("warn", f"{npc} introuvable sur la carte {tgt}"); return False
+                    try: self._act(f"Parler au PNJ {actor}", lambda: self.s._do_talk(actor))
+                    except RuntimeError as e: self.say("warn", f"dialogue impossible : {e}"); return False
+                    self._dialog(); self._sleep(2.5)
+                    if self._world(self.s.map_id) == world: break
+            finally: self._prefer_words = set()
+            self._sleep(2.0)
+            return self._world(self.s.map_id) == world
+        self.say("warn", f"aucun portail connu de {here} vers {world}"); return False
+
+    def _follow_guide_npcs(self, qid, oid):
+        """An objective "talk to the occupants of ..." needs a chain of talks the objective does not spell out: do them in the order the scraped guide
+        names the NPCs (a bartender, then a drinker, then someone upstairs), choosing the replies the guide quotes. -> True once the objective is done."""
+        import questreport
+        name = (gamedata.quest_data("quests", qid) or {}).get("name")
+        seq = questreport.guide_npcs(name) if name else []
+        if not seq: return False
+        done = lambda: not self.s.quests.get(qid, (None, {}))[1].get(oid, False)
+        self.say("info", f"guide de « {name} » : PNJ à voir dans l'ordre : " + ", ".join(n for n, _i, _m in seq))
+        for npc, ids, maps in seq:
+            if not self._alive(): return False
+            reach = distances(self.s.map_id); ok = [m for m in maps if m == self.s.map_id or m in reach]
+            if not ok: self.say("info", f"guide : {npc} hors de portée"); continue
+            tgt = min(ok, key=lambda m: reach.get(m, 0))
+            if self.s.map_id != tgt and not self._travel(tgt): continue
+            actor = next((a for i in ids for a in [self._find_npc(i)] if a is not None), None)
+            if actor is None: self.say("info", f"guide : {npc} absent de la carte {tgt}"); continue
+            self.say("info", f"guide : je parle à {npc}")
+            try: self._act(f"Parler au PNJ {actor}", lambda: self.s._do_talk(actor))
+            except RuntimeError as e: self.say("warn", f"dialogue impossible : {e}"); continue
+            self._dialog(); self._sleep(1.5)
+            try: self.s.sync_quests()
+            except Exception: pass
+            if done(): self.say("info", "objectif accompli"); return True
+        return done()
+
     def _talk_npcs(self, qid, oid, text):
         """Talk to the NPCs of the current map (the one named in the text first) and answer their dialogs until the objective is done.
         The reply index shifts with the attempt, so that the next tries walk other branches of the dialog."""
@@ -562,7 +665,7 @@ class Autopilot:
         if not self._travel(target): return False
         time.sleep(2.0)
         if re.match(r"\s*(parler|discuter|retourner|aller voir)", text.lower()):       # free-text "talk to ..." objective: the NPC is named in the text
-            if self._talk_npcs(qid, oid, text): return True
+            if self._talk_npcs(qid, oid, text) or self._follow_guide_npcs(qid, oid): return True
             self.say("warn", "objectif non validé après avoir parlé aux PNJ de la carte"); return self.attempts[oid] < FREE_ATTEMPTS
         words = [w for w in re.findall(r"[a-zéèêàç]{4,}", text.lower()) if w not in ("lire", "utiliser", "contant", "légende", "dans", "avec")]
         done = lambda: not self.s.quests.get(qid, (None, {}))[1].get(oid, False)
@@ -578,7 +681,7 @@ class Autopilot:
             if found: self.say("event", f"porte trouvée : carte {self.s.map_id}"); self._sleep(2.0); return self.attempts[oid] < FREE_ATTEMPTS
         if not ok and self.s.npcs and self._alive():       # still nothing: an NPC of the map may open the way (the gravedigger lets you into the crypt...)
             self.say("info", "aucun élément ne valide l'objectif : j'essaie de parler aux PNJ de la carte")
-            ok = self._talk_npcs(qid, oid, text)
+            ok = self._talk_npcs(qid, oid, text) or self._follow_guide_npcs(qid, oid)
         if ok: self.say("info", "objectif accompli"); return True
         self.say("warn", "objectif non validé après l'essai des éléments et des PNJ de la carte"); return self.attempts[oid] < FREE_ATTEMPTS
 
@@ -907,7 +1010,8 @@ class Autopilot:
         with self.s._lock: done = set(self.s.finished_quests); active = set(self.s.quests)
         if not done: return False          # the finished list comes with the login: without it everything would look unstarted
         for qid, q in sorted(questreport.area_quests(info["area"]).items(), key=lambda kv: (kv[1]["level"] or 0, kv[0])):
-            if qid in done or qid in active or qid in self._start_tried: continue
+            if qid in done or qid in active or qid in self._start_tried or str(qid) in knowledge.load("quests_ignored.json", {}): continue
+            if self.s.level and q["level"] and q["level"] > self.s.level + 4: continue      # too hard for now: the list is sorted by level, the next ones are even harder
             self._start_tried.add(qid)
             offer = knowledge.load("quest_starters.json", {}).get(str(qid))
             if offer:         # the quest starts from an element (a job board), not from an NPC
@@ -1060,12 +1164,17 @@ class Autopilot:
             g = dpln.find(name)
             if g: ctx += (g.get("steps") or [])[:3]
         words = set(gamejobs.norm(" ".join(ctx)).split())
+        import questreport
+        quotes = set()
+        for qid in quests: quotes |= questreport.quoted_replies((gamedata.quest_data("quests", qid) or {}).get("name"))
         def score(text):
             sc = 0
             for i, w in enumerate(re.findall(r"[^\W\d_]+", text)):
                 n = gamejobs.norm(w)
                 if len(n) >= 5 and n in words: sc += 3 if (i > 0 and w[0].isupper()) else 1
             if any(p and p in gamejobs.norm(text) for p in self._prefer_words): sc += 6      # the item being bought
+            tn = gamejobs.norm(text).strip(" .!?")
+            if any(len(q) >= 6 and (q in tn or tn in q) for q in quotes): sc += 10      # the guide quotes this very reply
             return sc
         scored = sorted(((score(x["text"]), x) for x in replies if not REFUSE.search(x["text"])), key=lambda t: -t[0])
         if scored and scored[0][0] >= 2 and (len(scored) == 1 or scored[0][0] > scored[1][0]): return scored[0][1]

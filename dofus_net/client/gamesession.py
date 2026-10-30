@@ -43,7 +43,7 @@ class Session:
         self._map_changed_at = 0.0   # time of the last jow
         self._trace = None   # list of (time, 'S'|'C', message, hex) while a fight is being recorded (see _do_attack)
         self._icj_events = {}; self._dlg = None; self._done = collections.deque(maxlen=60)   # dialog being recorded; (time, quest, objective) accomplished lately
-        self.finished_quests = set(); self.npcs = {}; self.quests = {}; self.dialog = None   # actor id -> template id; quest id -> (step, objectives); open dialog
+        self._probe_reset = set(); self.level = None; self.finished_quests = set(); self.npcs = {}; self.quests = {}; self.dialog = None   # actor id -> template id; quest id -> (step, objectives); open dialog
         self._dialog_event = threading.Event(); self.recent = collections.deque(maxlen=200)   # (time, message type) of everything received
         self._act = threading.Lock(); self.busy = None; self._moved = threading.Event(); self._mapchanged = threading.Event()
         self._stop = threading.Event(); self._thread = None; self._lock = threading.RLock()
@@ -93,7 +93,7 @@ class Session:
             sl = gamestate.shortcut_spells(body)
             if sl: self.spell_ids = [sid for _slot, sid in sorted(sl)]
         if t == gamestate.KSC:
-            self.char_id = gamestate.selection(body)[0]; self.breed_id = gamestate.breed_of(body)
+            self.char_id = gamestate.selection(body)[0]; self.breed_id = gamestate.breed_of(body); self.level = gamestate.level_of(body)
         elif t == gamestate.JOW:
             mid = next((v for f, v in parse(body) if f == 1 and isinstance(v, int)), None)
             self._map_changed_at = time.time()
@@ -692,6 +692,11 @@ class Session:
         start_map = self.map_id
         m = self.mapdata(); target = (m or {}).get("neighbours", {}).get(side)
         if not m or not target: raise RuntimeError(f"pas de carte voisine ({side})")
+        bundle_target = target
+        override = knowledge.load("border_targets.json", {}).get(f"{start_map}:{side}")
+        targets = [int(override)] if override else [target]
+        if not override and not gamedata.get("maps", target):      # the neighbour id of the bundle is not a real map (interiors): the maps that lead in here by a door are the likely ones
+            targets += [int(k) for k, lst in gamedoors.load().items() if any(e.get("to") == start_map for e in lst) and int(k) not in targets]
         learned = knowledge.load("exit_cells.json", {}).get(f"{start_map}:{side}", [])
         cands = []
         for c in gamemaps.exit_cells(m, side):
@@ -715,10 +720,18 @@ class Session:
                 continue
             if self.map_id != start_map and self._mapchanged.is_set():   # some borders change the map as soon as the exit cell is reached
                 self.log("info", f"la carte a changé en marchant sur la case de sortie {cell}"); self._remember_exit(start_map, side, cell); time.sleep(1.0); return
-            self._mapchanged.clear()
-            self._send(login.JOC, f_varint(2, target)); self.log("action", f"→ joc : carte voisine {side} ({target}) depuis la case {cell}")
-            if self._mapchanged.wait(6):
-                self._remember_exit(start_map, side, cell); time.sleep(1.0); return
+            moved = False
+            for target in targets:
+                self._mapchanged.clear()
+                self._send(login.JOC, f_varint(2, target)); self.log("action", f"→ joc : carte voisine {side} ({target}) depuis la case {cell}")
+                if self._mapchanged.wait(6 if target == targets[0] else 4): moved = True; break
+            if moved:
+                self._remember_exit(start_map, side, cell)
+                if self.map_id != bundle_target:      # the real neighbour differs from the bundle's: remember it (the route planner uses it)
+                    with knowledge._lock:
+                        d = knowledge.load("border_targets.json", {}); d[f"{start_map}:{side}"] = self.map_id; knowledge.save("border_targets.json", d)
+                    self.log("event", f"Sortie {side} de {start_map} → {self.map_id} (≠ carte voisine du fichier)")
+                time.sleep(1.0); return
             self.log("warn", f"la case de sortie {cell} est refusée par le serveur" + (" : essai d'une autre case" if n < min(len(cands), 4) - 1 else ""))
         raise RuntimeError("le serveur n'a pas changé de carte (jow) pour aucune case de sortie essayée")
 
@@ -778,6 +791,8 @@ class Session:
         """Door discovery on the current map. If nothing is left to try because the cells were all tried before (maybe by an earlier, less accurate
         prediction), forget them for this map and try once more with a wider ring of cells. -> True if a passage was found."""
         if self._probe_doors_once(max_cells): return True
+        if self.map_id in self._probe_reset: return False      # forgotten once per map and session: a second reset would only repeat the same tries
+        self._probe_reset.add(self.map_id)
         with knowledge._lock:
             d = knowledge.load(self.PROBE_FILE, {})
             if not d.pop(str(self.map_id), None): return False

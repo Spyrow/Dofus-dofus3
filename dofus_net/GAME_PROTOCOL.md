@@ -125,3 +125,12 @@ Bundles Unity `Dofus_Data/StreamingAssets/Content/Data/*.asset.bundle` + textes 
 - `juo` / `jwj` donnent pour chaque combattant le modèle (3.4.6.3.3), la vie (3.4.7.4, stat sans id) et les PM (stat 23) : Kardorim 140 PV / 4 PM, chafer 54 PV / 3 PM.
 - Tactique (Sacrieur) quand il y a 4 ennemis ou plus : Mutilation une fois par combat, Stase (1-5 cases) sur le boss ou l'ennemi le plus proche à portée,
   puis fuite avec les PM restants vers la case la moins menacée. Kardorim vaincu ainsi au premier essai.
+
+## Équipement, succès, offres de quête, achats (captures du 2026-10-30)
+- **Équiper** : `ito {1: 1, 2: uid, 3: emplacement}` (1 = arme / outil, 63 = dans le sac) -> `iqn {1: uid, 3: emplacement}`. Les `uid` changent à chaque connexion.
+- **Succès** : `mdw {1: -1}` réclame toutes les récompenses en attente -> `mdj {1: id du succès, 3: 1}` par succès (récompenses : `krg`, `iqx`, `ith`, `kaq`).
+  Les noms viennent de `data_assets_achievementsdataroot.asset.bundle` + `I18n/fr.bin` (`client/gameachievements.py`). `mdp` (login du vrai client) liste les succès débloqués.
+- **Offre de quête portée par un élément** (panneau d'offres d'emploi) : `itz` sur l'élément, puis `icf {1: id de la quête}` accepte, `kiq` ferme (`knowledge/quest_starters.json`).
+- **Achat à un PNJ** : un simple dialogue (`ilt`, `iky`) dont une réponse nomme l'objet (« Prendre un lailait bien frais pour 4 kamas ») ; l'objet arrive par `iqx`.
+- **Relief et zones** : cf. `gamemaps.can_step`. **Cases de ressources** : `jnj` champ 2 `{3: élément, 4: case}` (portes et ateliers n'y figurent pas).
+- **Guides scrapés** (`knowledge/dpln_quests.json`) : le bot y lit le PNJ de départ, les monstres qui lâchent un objet (« se drop sur le Tofu Chimérique ») et les vendeurs.

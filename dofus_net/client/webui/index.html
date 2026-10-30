@@ -45,7 +45,7 @@ td input,td select{max-width:none;width:100%;min-width:56px}td input[type=number
 <aside>
   <h1>Comptes</h1>
   <div id="list"></div>
-  <p><button class="p" id="add">+ Connecter un compte</button></p>
+  <p><button class="p" id="add">+ Connecter un compte</button> <button id="newacc">+ Créer un compte Ankama</button></p>
   <p class="msg" id="loginmsg"></p>
   <div class="card" id="createbox" style="display:none">
     <h2>Creer un compte Ankama</h2>
@@ -229,7 +229,7 @@ async function pollCreations(){
 }
 
 $("#cgo").onclick=async()=>{
-  const box=$("#createbox");box.style.display="none";
+  const box=$("#createbox");
   try{
     await api("/api/account/create","POST",{
       email:$("#ce").value,password:$("#cp").value,firstname:$("#cf").value,
@@ -251,7 +251,7 @@ $("#cok").onclick=async()=>{
     $("#ccode").value="";clearInterval(cpoll);loadCreations();
   }catch(e){$("#cconfirmsg").textContent=e.message;$("#cconfirmsg").className="msg err"};
 };
-$("#add").onclick=async()=>{$("#createbox").style.display=$("#createbox").style.display===""?"block":"none";};
+$("#newacc").onclick=()=>{const b=$("#createbox");b.style.display=b.style.display==="none"?"":"none"};
 loadCreations();
 
 

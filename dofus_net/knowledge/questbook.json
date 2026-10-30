@@ -188,13 +188,14 @@
   },
   "1633": {
    "name": "Mort au rat !",
-   "seen": 19,
+   "seen": 20,
    "steps": {
     "2253": {
      "name": "Mort au rat !",
      "objectives": {
       "9769": "Faire sortir le rat de sa cachette",
       "9770": "Vaincre x1 Rat Soiffé en un seul combat",
+      "9771": "Aller voir Grobid",
       "9895": "Inspecter la cave."
      }
     }
@@ -489,13 +490,39 @@
   },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 530,
+   "seen": 553,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",
      "objectives": {
       "13849": "Entrer dans la Tour du Conseil d'Astrub",
+      "13850": "Aller voir Conseillère Archie",
       "14257": "Aller voir Envoyée des Douze"
+     }
+    }
+   }
+  },
+  "1959": {
+   "name": "On marche sur des œufs",
+   "seen": 95,
+   "steps": {
+    "2629": {
+     "name": "On marche sur des œufs",
+     "objectives": {
+      "13851": "Entrer dans la taverne d'Astrub",
+      "13852": "Parler avec les occupants de la taverne pour attirer l'attention d'un trafiquant"
+     }
+    }
+   }
+  },
+  "1975": {
+   "name": "Ça tombe à l'eau",
+   "seen": 2,
+   "steps": {
+    "2635": {
+     "name": "Ça tombe à l'eau",
+     "objectives": {
+      "13952": "Découvrir la carte : Étang d'Astrub"
      }
     }
    }

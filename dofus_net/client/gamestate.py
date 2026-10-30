@@ -85,6 +85,15 @@ def selection(body):
         return None, None
 
 
+def level_of(body):
+    """KSC body -> the character's level (2.4.3) or None."""
+    try:
+        e = next(v for f, v in parse(body) if f == 2 and isinstance(v, bytes))
+        c = next(v for f, v in parse(e) if f == 4 and isinstance(v, bytes))
+        return next((v for f, v in parse(c) if f == 3 and isinstance(v, int)), None)
+    except (StopIteration, ValueError, IndexError): return None
+
+
 def breed_of(body):
     """KSC body -> breed id or None."""
     try:
