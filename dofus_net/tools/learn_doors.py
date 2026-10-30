@@ -78,6 +78,22 @@ def uses(msgs):
     return found
 
 
+def exits(msgs):
+    """Border crossings: a client `joc {2: neighbour map}` after a `jok` on the current map, answered by a `jow` to that map.
+    -> [(map, side, exit cell)] (the cell the real client stood on, tried first by the bot)."""
+    import gamemaps
+    found, cur = [], None
+    for i, (t, k, n, b) in enumerate(msgs):
+        if k == "S" and n == "jow": cur = vi(b, 1)
+        elif k == "C" and n == "joc" and cur:
+            target = vi(b, 2)
+            if not any(k2 == "S" and n2 == "jow" and vi(b2, 1) == target and t2 - t < 5 for t2, k2, n2, b2 in msgs[i + 1:i + 80]): continue
+            m = gamemaps.load(cur); side = next((sd for sd, v in ((m or {}).get("neighbours") or {}).items() if v == target), None)
+            cell = next((last_cell(b2) for t2, k2, n2, b2 in reversed(msgs[:i]) if k2 == "C" and n2 == "jok" and t - t2 < 8 and vi(b2, 2) == cur), None)
+            if side and cell is not None: found.append((cur, side, cell))
+    return found
+
+
 def steps(msgs):
     """Trigger cells: a client `jok` on the current map followed within 3 s by a server `jow` to another map, with no itz / joc in between."""
     found, cur = [], None
@@ -94,6 +110,13 @@ def main():
     new = total = 0
     for pcap in sys.argv[1:]:
         msgs = messages(pcap)
+        for mp, side, cell in exits(msgs):
+            d = knowledge.load("exit_cells.json", {}); lst = d.setdefault(f"{mp}:{side}", [])
+            added = cell not in lst
+            if added:
+                with knowledge._lock: lst.insert(0, cell); knowledge.save("exit_cells.json", d)
+            total += 1; new += added
+            print(f"{'+' if added else '='} map {mp} border {side}: exit cell {cell}")
         for oid, mp, chain in uses(msgs):
             total += 1; d = knowledge.load("element_uses.json", {})
             if d.get(str(oid)) != {"map": mp, "steps": chain}:

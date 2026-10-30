@@ -132,7 +132,7 @@
   },
   "1634": {
    "name": "Espoirs et tragédies",
-   "seen": 65,
+   "seen": 70,
    "steps": {
     "2254": {
      "name": "Espoirs et tragédies",
@@ -141,14 +141,15 @@
       "9773": "Retourner voir Fécaline la Sage",
       "9774": "Parler à un vieux de la vieille",
       "9775": "Parler à une féline pantouflarde",
-      "9776": "Parler à un voleur malchanceux"
+      "9776": "Parler à un voleur malchanceux",
+      "9777": "Retourner voir Fécaline la Sage"
      }
     }
    }
   },
   "1639": {
    "name": "Transport peu commun",
-   "seen": 152,
+   "seen": 157,
    "steps": {
     "2259": {
      "name": "Transport peu commun",
@@ -251,7 +252,7 @@
   },
   "1648": {
    "name": "Des chafers qui marchent",
-   "seen": 89,
+   "seen": 94,
    "steps": {
     "2268": {
      "name": "Des chafers qui marchent",
@@ -267,7 +268,7 @@
   },
   "1649": {
    "name": "Produits naturels",
-   "seen": 152,
+   "seen": 157,
    "steps": {
     "2269": {
      "name": "Produits naturels",
@@ -281,7 +282,7 @@
   },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 152,
+   "seen": 157,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",
