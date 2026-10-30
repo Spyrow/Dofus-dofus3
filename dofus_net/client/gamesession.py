@@ -612,6 +612,12 @@ class Session:
         finally: self._dump_trace([])
         return True
 
+    def _do_resume_fight(self):
+        """The character is already in a fight (reconnection): the placement is over, only play the turns."""
+        self.fight.over.clear(); self._trace = []
+        try: self.fight.play(resume=True)
+        finally: self._dump_trace([])
+
     def attack(self, actor):
         return self.start_action(f"Attaquer le groupe {actor}", lambda: self._do_attack(actor))
 

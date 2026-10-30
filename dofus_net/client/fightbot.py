@@ -121,14 +121,17 @@ class Fight:
         threading.Thread(target=go, daemon=True).start()
 
     # ---- playing ----
-    def play(self):
-        """Run a whole fight (blocking). The fight map is already loaded (the attack request was answered)."""
+    def play(self, resume=False):
+        """Run a whole fight (blocking). The fight map is already loaded (the attack request was answered).
+        resume: the fight was already running when we connected (reconnection): no placement / ready, just wait for our turns."""
         import login
         s = self.s; say = lambda m: s.log("action", "Combat : " + m)
-        s._send(login.IGK); say("placement (igk)")   # jxi may already have arrived (it resets the state itself): do not reset here
-        if not self.started.wait(10): raise RuntimeError("le combat n'a pas démarré (pas de jxi)")
-        time.sleep(1.0)
-        s._send(login.JXJ, f_varint(1, 1)); say("prêt (jxj)")
+        if resume: say("reprise du combat en cours")
+        else:
+            s._send(login.IGK); say("placement (igk)")   # jxi may already have arrived (it resets the state itself): do not reset here
+            if not self.started.wait(10): raise RuntimeError("le combat n'a pas démarré (pas de jxi)")
+            time.sleep(1.0)
+            s._send(login.JXJ, f_varint(1, 1)); say("prêt (jxj)")
         end = time.time() + FIGHT_TIMEOUT
         while not self.over.is_set() and time.time() < end and s.status == "connected" and not s._stop.is_set():
             if not self.my_turn.wait(1.0): continue

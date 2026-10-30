@@ -132,7 +132,11 @@ class Autopilot:
         self.say("info", "démarré")
         try:
             while self._alive():
-                if self.s.in_fight: self.say("warn", "un combat est en cours (hors autopilote), arrêt"); break
+                if self.s.in_fight:   # a fight already running (reconnection, manual start): play its turns instead of stopping
+                    self.say("info", "un combat est en cours : je le reprends")
+                    try: self._act("Reprise du combat", self.s._do_resume_fight)
+                    except RuntimeError as e: self.say("warn", f"combat impossible : {e}"); break
+                    time.sleep(REST_SECONDS); continue
                 if self.s.dialog: self._dialog(); continue
                 obj, why = self._pick()
                 if obj is None and time.time() - self._last_sync > 20:   # the server does not push the next step by itself: ask for the fresh state, once in a while
