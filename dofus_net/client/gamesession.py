@@ -8,7 +8,7 @@ closed (a second session on the same account kicks the first, in both directions
 Chat: the chat messages are NOT decoded yet (none in the captures so far): `Session.chat` stays empty until gamestate
 learns the message; see add_chat()."""
 import collections, json, os, threading, time
-import knowledge, accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, autopilot, fightbot, questbook, login
+import boost, knowledge, accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, autopilot, fightbot, questbook, login
 from wire import parse, dec_varint, enc_varint, f_bytes, f_varint, request
 from haapi import create_game_token, GAME_IDS
 
@@ -37,6 +37,7 @@ class Session:
         self.groups = {}; self.stats = {}; self.spell_ids = []; self.fight = fightbot.Fight(self)   # monster groups {actor: [monster ids]}
         self.elements = {}   # interactive elements of the current map (from jnj)
         self.in_fight = False; self.auto = autopilot.Autopilot(self)
+        self.breed_id = None; self._krg_event = threading.Event(); self._boosting = False
         self._map_changed_at = 0.0   # time of the last jow
         self._trace = None   # list of (time, 'S'|'C', message, hex) while a fight is being recorded (see _do_attack)
         self._icj_events = {}; self._dlg = None; self._done = collections.deque(maxlen=60)   # dialog being recorded; (time, quest, objective) accomplished lately
@@ -74,11 +75,12 @@ class Session:
         if t == gamestate.KRG:
             try: self.stats = gamestate.characteristics(body)
             except (ValueError, IndexError): pass
+            self._krg_event.set(); self._maybe_auto_boost()
         elif t == gamestate.ISM:
             sl = gamestate.shortcut_spells(body)
             if sl: self.spell_ids = [sid for _slot, sid in sorted(sl)]
         if t == gamestate.KSC:
-            self.char_id = gamestate.selection(body)[0]
+            self.char_id = gamestate.selection(body)[0]; self.breed_id = gamestate.breed_of(body)
         elif t == gamestate.JOW:
             mid = next((v for f, v in parse(body) if f == 1 and isinstance(v, int)), None)
             self._map_changed_at = time.time()
@@ -205,6 +207,62 @@ class Session:
                 # validation helpers (not sent to the model)
                 "npcs": [{"actor": n["actor"]} for n in mv.get("npcs", [])], "groups": [{"actor": g["actor"]} for g in mv.get("groups", []) if len(g["monsters"]) <= 3],
                 "elements": [{"element": e["element"]} for e in mv.get("elements", [])], "sides": sides, "reachable_maps": list(targets)}
+
+    # ---- capital points ----
+    def boost_view(self):
+        s = boost.load_settings(self.aid); f = boost.fields()
+        return {"live": self.status == "connected", "points": self.stats.get(boost.POINTS), "breed": gamedata.get("breeds", self.breed_id) if self.breed_id else None,
+                "auto": s["auto"], "weights": s["weights"],
+                "stats": [{"id": c, "name": n, "value": self.stats.get(c, 0), "cost": boost.cost(self.breed_id, c, self.stats.get(c, 0)),
+                           "verified": f[c][1]} for c, n in boost.STATS.items()]}
+
+    def _maybe_auto_boost(self):
+        """After every characteristics update: spend the points automatically if the player asked for it."""
+        if self._boosting or self.in_fight or self.status != "connected" or not (self.stats.get(boost.POINTS) or 0) > 0: return
+        if not boost.load_settings(self.aid)["auto"]: return
+        threading.Timer(1.5, lambda: self.start_boost(auto=True)).start()
+
+    def start_boost(self, weights=None, auto=False):
+        if self.in_fight: return "combat en cours"
+        return self.start_action("Répartir les points de caractéristiques", lambda: self._do_boost(weights))
+
+    def _wait_krg(self, timeout=4.0):
+        return self._krg_event.wait(timeout)
+
+    def _do_boost(self, weights=None):
+        """Spend the capital points following the weights. The first boost into a characteristic whose message field is not verified is a
+        single one, checked against the server's answer (which characteristic really moved)."""
+        self._boosting = True
+        try:
+            s = boost.load_settings(self.aid); weights = weights or s["weights"]
+            points = self.stats.get(boost.POINTS) or 0
+            if points <= 0: self.log("info", "Aucun point de caractéristiques à répartir"); return
+            if not self.breed_id: raise RuntimeError("classe inconnue")
+            values = {c: self.stats.get(c, 0) for c in boost.STATS}
+            todo, used = boost.plan(points, values, self.breed_id, weights)
+            if not todo: raise RuntimeError("répartition vide (poids nuls ou points insuffisants)")
+            self.log("info", "Répartition prévue : " + ", ".join(f"{boost.STATS[c]} +{n}" for c, n in todo.items()) + f" ({used} points sur {points})")
+            for cid, n in todo.items():
+                field, verified = boost.fields()[cid]
+                first = 1 if not verified else n
+                for amount in ((first, n - first) if not verified and n > 1 else (n,)):
+                    if amount <= 0: continue
+                    before = dict(self.stats); self._krg_event.clear()
+                    self._send(boost.KRC, f_varint(field, amount)); self.log("action", f"→ krc : {boost.STATS[cid]} +{amount} (champ {field})")
+                    if not self._wait_krg(): raise RuntimeError("le serveur n'a pas confirmé la répartition (pas de krg)")
+                    moved = {c: self.stats.get(c, 0) - before.get(c, 0) for c in boost.STATS if self.stats.get(c, 0) != before.get(c, 0)}
+                    spent = (before.get(boost.POINTS) or 0) - (self.stats.get(boost.POINTS) or 0)
+                    if cid in moved and moved[cid] >= amount:
+                        if not verified: boost.verify(cid, field); verified = True; self.log("event", f"Champ {field} = {boost.STATS[cid]} confirmé")
+                    elif moved:
+                        real = max(moved, key=lambda c: moved[c])
+                        boost.verify(real, field)
+                        raise RuntimeError(f"calibrage : le champ {field} augmente {boost.STATS[real]} (et non {boost.STATS[cid]}) : noté, relance la répartition")
+                    else: raise RuntimeError(f"aucun effet sur {boost.STATS[cid]} (points dépensés : {spent})")
+                    time.sleep(0.4)
+            self.log("event", f"Points répartis ; restants : {self.stats.get(boost.POINTS)}")
+        finally:
+            self._boosting = False
 
     def _active_objectives(self):
         with self._lock: return [o for _q, (_st, objs) in self.quests.items() for o, active in objs.items() if active]

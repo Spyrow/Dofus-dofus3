@@ -10,7 +10,7 @@ import argparse, json, os, re, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-import accounts, gamesession, groq, questbook
+import accounts, boost, gamesession, groq, questbook
 from pkce_login import login
 
 DEMO = {"id": "demo", "label": "Démo (données fictives)", "added": None, "refreshed": None, "snapshot": None, "demo": True}
@@ -97,6 +97,8 @@ class H(BaseHTTPRequestHandler):
             data = accounts.sample_character() if aid == "demo" else accounts.load_character(aid)
             if data is None: self._json({"error": "no_snapshot"}, 404)
             else: self._json(data)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/boost", p):
+            self._json(gamesession.session(m[1]).boost_view())
         elif m := re.fullmatch(r"/api/accounts/(\w+)/quests", p):
             self._json(gamesession.session(m[1]).questview())
         elif p == "/api/groq":
@@ -169,6 +171,14 @@ class H(BaseHTTPRequestHandler):
             stand = body.get("stand"); stand = int(stand) if isinstance(stand, (int, float)) and 0 <= stand < 560 else None
             err = gamesession.session(m[1]).use_element(n, stand)
             self._json({"error": err} if err else {"ok": True}, 409 if err else 202)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/boost", p):
+            w = body.get("weights") if isinstance(body.get("weights"), dict) else None
+            try: s = boost.save_settings(m[1], body.get("auto"), w) if ("auto" in body or w) else boost.load_settings(m[1])
+            except (TypeError, ValueError): return self._json({"error": "paramètres invalides"}, 400)
+            if body.get("run"):
+                err = gamesession.session(m[1]).start_boost(w)
+                if err: return self._json({"error": err}, 409)
+            self._json(s, 202 if body.get("run") else 200)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/syncquests", p):
             self._json({"finished": gamesession.session(m[1]).sync_quests()})
         elif m := re.fullmatch(r"/api/accounts/(\w+)/(talk|reply)", p):

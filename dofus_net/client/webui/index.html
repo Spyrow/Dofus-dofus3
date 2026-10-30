@@ -100,6 +100,7 @@ async function render(){
   const tabs={
    fiche:()=>`<div class="card"><h2>${esc(c.name||"Personnage")} ${c.level?`<span class="msg">· niveau ${esc(c.level)}</span>`:""}</h2>${bar(c.xp_pct)}
      ${info.map(r=>`<div class="row"><span>${r[0]}</span><span>${esc(r[1])}</span></div>`).join("")}</div>
+    <div id="boostbox"></div>
     <div class="grid">
      <div class="card"><h2>Caractéristiques</h2>${Object.entries(d.characteristics||{}).map(([g,v])=>`<p class="msg" style="margin:10px 0 2px">${esc(g)}</p>${Object.entries(v).map(([k,x])=>`<div class="row"><span>${esc(k)}</span><span>${esc(x)}</span></div>`).join("")}`).join("")||none}</div>
      <div class="card"><h2>Équipement</h2>${(d.equipment||[]).map(i=>`<div class="slot"><span class="msg">${esc(i.slot)}</span> — ${i.name?`<b>${esc(i.name)}</b>${i.level?` <span class="msg">niv. ${esc(i.level)}</span>`:""}<div class="stats">${(i.stats||[]).map(esc).join(" · ")}</div>`:"<em>vide</em>"}</div>`).join("")||none}</div></div>`,
@@ -121,6 +122,7 @@ async function render(){
   if(tab==="map"){initCurMap(a);initMap(a,d)}
   if(tab==="console")initConsole(a);
   if(tab==="quests")refreshQuests(a);
+  if(tab==="fiche"&&!a.demo)initBoost(a);
   const q=$("#invq");if(q){q.oninput=()=>{invQ=q.value;const pos=q.selectionStart;render().then(()=>{const n=$("#invq");n&&(n.focus(),n.setSelectionRange(pos,pos))})};}
 }
 // ---- Game session: status, journal ("Console" tab) ----
@@ -275,6 +277,28 @@ function drawCurMap(){
   if(v.me!=null){const[x,y]=cellC(v.me);g.beginPath();g.arc(x,y,7,0,7);g.fillStyle=col("--acc");g.fill();g.strokeStyle="#fff";g.lineWidth=2;g.stroke()}
 }
 
+
+
+// ---- Capital points: automatic stat boost ----
+let boostSig="";
+async function initBoost(a){
+  const box=$("#boostbox");if(!box)return;
+  let v;try{v=await api(`/api/accounts/${a.id}/boost`)}catch{return}
+  const sig=JSON.stringify(v);if(sig===boostSig&&box.firstChild)return;boostSig=sig;
+  if(document.activeElement&&/^bw/.test(document.activeElement.id||""))return;
+  const pts=v.points??"—";
+  box.innerHTML=`<div class="card"><h2>Boost de caractéristiques <span class="badge ${v.points>0?"connected":""}">${esc(pts)} point(s) à répartir</span></h2>
+   <p class="hint">Répartition en pourcentage entre les caractéristiques de base. Le coût d'un point dépend de la classe${v.breed?" ("+esc(v.breed)+")":""} et de la valeur actuelle.
+    La première fois qu'un point est envoyé vers une caractéristique, un seul est dépensé et contrôlé dans la réponse du serveur.</p>
+   <table><tr><th>Caractéristique</th><th class="n">Valeur</th><th class="n">Coût du prochain</th><th class="n">Poids %</th><th>Message</th></tr>
+   ${v.stats.map(s=>`<tr><td>${esc(s.name)}</td><td class="n">${esc(s.value)}</td><td class="n">${esc(s.cost)}</td><td class="n"><input id="bw${s.id}" type="number" min="0" max="100" value="${esc(v.weights[s.id]??0)}" style="width:70px"></td><td class="msg">${s.verified?"vérifié":"à contrôler"}</td></tr>`).join("")}</table>
+   <p><label><input type="checkbox" id="bauto" style="width:auto" ${v.auto?"checked":""}> Répartir automatiquement quand des points sont disponibles (connexion, montée de niveau)</label></p>
+   <p><button id="bsave">Enregistrer</button> <button class="p" id="brun" ${v.live&&v.points>0?"":"disabled"}>Distribuer maintenant</button> <span class="msg" id="bmsg"></span></p></div>`;
+  const read=()=>Object.fromEntries(v.stats.map(s=>[s.id,+($("#bw"+s.id).value||0)]));
+  $("#bsave").onclick=async()=>{try{await api(`/api/accounts/${a.id}/boost`,"POST",{weights:read(),auto:$("#bauto").checked});$("#bmsg").textContent="Enregistré.";boostSig=""}catch(e){$("#bmsg").textContent=e.message}};
+  $("#brun").onclick=async()=>{if(!confirm("Dépenser les points maintenant selon cette répartition ? Cela ne peut pas être annulé depuis ici."))return;
+    try{await api(`/api/accounts/${a.id}/boost`,"POST",{weights:read(),auto:$("#bauto").checked,run:true});$("#bmsg").textContent="Répartition lancée (voir la Console).";boostSig=""}catch(e){$("#bmsg").textContent=e.message}};
+}
 
 // ---- Quests and dialogs ----
 let qSig="";

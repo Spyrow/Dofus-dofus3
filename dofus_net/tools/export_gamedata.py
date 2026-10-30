@@ -59,6 +59,9 @@ def main():
     out["interactives"] = {k: t(v["nameId"]) for k, v in table(dd, "interactives").items()}
     out["jobs"] = {k: t(v["nameId"]) for k, v in table(dd, "jobs").items()}
     out["breeds"] = {k: t(v["shortNameId"]) for k, v in table(dd, "breeds").items()}
+    # capital points cost: breed -> characteristic id -> [[value threshold, points per boost], ...] (10 strength, 11 vitality, 12 wisdom, 13 chance, 14 agility, 15 intelligence)
+    names = {10: "Strength", 11: "Vitality", 12: "Wisdom", 13: "Chance", 14: "Agility", 15: "Intelligence"}
+    out["breed_costs"] = {k: {cid: [x["values"] for x in v[f"statsPointsFor{nm}"]] for cid, nm in names.items()} for k, v in table(dd, "breeds").items()}
     out["effects"] = {k: t(v["descriptionId"]) for k, v in table(dd, "effects").items()}
     # maps: id -> [x, y, name, sub area id]; scroll: id -> [right, bottom, left, top] neighbour map ids (0 = none)
     out["maps"] = {k: [v["posX"], v["posY"], t(v["nameId"]), v["subAreaId"]] for k, v in table(dd, "mapsinformation").items()}

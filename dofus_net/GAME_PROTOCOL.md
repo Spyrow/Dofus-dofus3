@@ -86,5 +86,11 @@ Le panneau de succès fait `mdm{onglet}` -> `mdo` (liste de succès) : ce ne son
 - Envoyé à Groq : textes de quêtes/dialogues, noms de cartes/PNJ/éléments. Jamais de jeton, e-mail, nom de compte ou de personnage.
 - Fin de quête : le serveur n'envoie rien ; `ibj {quête}` est répondu par `icj` tant que la quête est active, une quête muette est terminée (`Session.sync_quests`).
 
+## Points de caractéristiques (`client/boost.py`)
+- `krc {N: nombre de boosts}` dépense des points de capital (caractéristique 3, `statsPoints`) ; capture : `krc {4: 40}` -> Chance (13) +40, points 40 -> 0, prospection +4 ; réponse `krg` + `iqq`.
+  Seul le champ 4 = Chance est observé ; les autres suivent l'hypothèse `champ = id - 9` (10 Force, 11 Vitalité, 12 Sagesse, 13 Chance, 14 Agilité, 15 Intelligence), contrôlée au premier envoi de chaque caractéristique (1 boost, lecture du `krg`)
+  et corrigée automatiquement (`knowledge/boost_fields.json`). Coût d'un boost : table `breed_costs` (classe x caractéristique x paliers de valeur).
+- Réglages par compte : `%APPDATA%/dofus_net/boost.json` (poids en %, répartition automatique à la connexion / montée de niveau). UI : onglet Fiche, carte « Boost de caractéristiques ».
+
 ## Données statiques (`tools/export_gamedata.py`)
 Bundles Unity `Dofus_Data/StreamingAssets/Content/Data/*.asset.bundle` + textes `Content/I18n/<lang>.bin` (index u32 id/offset, chaînes varint+UTF-8).
