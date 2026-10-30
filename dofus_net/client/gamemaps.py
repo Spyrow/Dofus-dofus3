@@ -68,6 +68,51 @@ def load(map_id):
     return m
 
 
+def element_positions(map_id):
+    """-> {interactive element id: (x, y)} in map pixels (read from the bundle, cached next to the cell data); {} when unknown."""
+    map_id = int(map_id); path = os.path.join(CACHE_DIR, f"{map_id}.elements.json")
+    try:
+        with open(path, encoding="utf8") as f: return {int(k): tuple(v) for k, v in json.load(f).items()}
+    except (OSError, ValueError): pass
+    global _index
+    if _index is None:
+        try:
+            with open(INDEX_PATH, encoding="utf8") as f: _index = json.load(f)
+        except (OSError, ValueError): _index = {}
+    bundle, game = (_index or {}).get(str(map_id)), _game_dir()
+    if not bundle or not game: return {}
+    import warnings; warnings.filterwarnings("ignore")
+    import UnityPy
+    UnityPy.config.FALLBACK_UNITY_VERSION = "6000.3.16f1"
+    env = UnityPy.load(os.path.join(game, "Dofus_Data", "StreamingAssets", "Content", "Map", "Data", bundle))
+    out = {}
+    for o in env.objects:
+        if o.type.name != "MonoBehaviour" or o.peek_name() != f"map_{map_id}": continue
+        for r in o.read_typetree()["references"]["RefIds"]:
+            d = r.get("data") or {}; e = d.get("<interactiveId>k__BackingField")
+            if e and "position" in d: out[e] = (d["position"]["x"], d["position"]["y"])
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(path, "w", encoding="utf8") as f: json.dump({str(k): v for k, v in out.items()}, f)
+    return out
+
+
+def cell_center(cell):
+    """Pixel centre of a cell (cells are 86 x 43 px diamonds, rows 21.5 px apart)."""
+    r, k = divmod(cell, 14)
+    return (k * 2 + (r % 2) + 1) * 43.0, (r + 1) * 21.5
+
+
+def stand_candidates(m, pos, limit=8, reach=150):
+    """Walkable cells most likely to be the use-cell of an element at pixel `pos`. Measured on learned doors: the use-cell centre is about
+    (x + 575, 545 - y) px from the element (+-1.5 cells), so the nearest walkable cells to that point come first."""
+    tx, ty = pos[0] + 575, 545 - pos[1]; out = []
+    for c in range(CELLS):
+        if not walkable(m, c): continue
+        cx, cy = cell_center(c); d = ((cx - tx) ** 2 + (cy - ty) ** 2) ** 0.5
+        if d <= reach: out.append((d, c))
+    return [c for _d, c in sorted(out)][:limit]
+
+
 def _read_bundle(map_id):
     global _index
     if _index is None:

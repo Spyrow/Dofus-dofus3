@@ -92,7 +92,7 @@ def pick_reply(replies, prefer=None):
 
 class Autopilot:
     def __init__(self, sess):
-        self.s = sess; self.on = False; self.goal = None; self.kinds = {"talk", "fight"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False
+        self.s = sess; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.kinds = {"talk", "fight"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False
         self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter()
 
     # ---- control ----
@@ -162,7 +162,7 @@ class Autopilot:
                 text = gamequests.objective_text(oid)
                 if o.get("type") in TALK_TYPES and o.get("map"):
                     if self.attempts[oid] >= MAX_ATTEMPTS: unsupported = unsupported or f"objectif « {text} » : échec après {MAX_ATTEMPTS} essais"
-                    elif self.s.map_id != int(o["map"]) and route(self.s.map_id, int(o["map"])) is None:
+                    elif self.s.map_id != int(o["map"]) and route(self.s.map_id, int(o["map"])) is None and not self._can_discover(int(o["map"])):
                         unsupported = unsupported or f"objectif « {text} » : aucune route connue (porte non apprise ?)"; continue
                     else: return (qid, oid), None
                 elif o.get("type") in FIGHT_TYPES and self.attempts[oid] < FIGHT_ATTEMPTS and (
@@ -306,6 +306,7 @@ class Autopilot:
         self.goal = f"{gamequests.objective_text(oid)} (carte {target})"
         self.attempts[oid] += 1
         self.say("info", f"objectif : {self.goal} — essai {self.attempts[oid]}/{MAX_ATTEMPTS}")
+        if self.s.map_id != target and route(self.s.map_id, target) is None and not self._discover(target): return False
         if not self._travel(target): return False
         actor = self._find_npc(npc_id)
         if actor is None:
@@ -328,6 +329,37 @@ class Autopilot:
             if found is not None or not self._alive(): return found
             time.sleep(0.5)
         return None
+
+    def _discover_maps(self, goal):
+        """Reachable maps close to the goal's coordinates (same square first): the building's door is usually on one of them."""
+        gi = gamedata.map_info(goal)
+        if not gi: return []
+        reach = distances(self.s.map_id); out = []
+        for mid, steps in reach.items():
+            mi = gamedata.map_info(mid)
+            if not mi or mid == goal or mi["world"] != gi["world"]: continue
+            d = max(abs(mi["x"] - gi["x"]), abs(mi["y"] - gi["y"]))
+            if d <= 1: out.append((d, steps, mid))
+        return [mid for _d, _s, mid in sorted(out)][:6]
+
+    def _can_discover(self, goal):
+        return self.discover_tries[goal] < 2 and bool(self._discover_maps(goal))
+
+    def _discover(self, goal):
+        """No known route to `goal`: visit the maps around it and probe their unknown doors until a route appears."""
+        self.discover_tries[goal] += 1
+        self.say("info", f"aucune route vers {goal} : découverte automatique des portes sur les cartes voisines")
+        for mid in self._discover_maps(goal):
+            for _ in range(12):
+                if not self._alive(): return False
+                if self.s.map_id != mid:
+                    if route(self.s.map_id, mid) is None: break
+                    if not self._travel(mid): break
+                if not self.s.probe_doors():
+                    self.say("info", f"carte {mid} : plus de porte à essayer"); break
+                if route(self.s.map_id, goal) is not None or self.s.map_id == goal: self.say("event", "route trouvée vers l'objectif"); return True
+                self.say("info", "porte apprise mais ce n'est pas la bonne : retour et poursuite de la découverte")
+        return route(self.s.map_id, goal) is not None
 
     def _travel(self, goal):
         """Walk/use doors until map `goal` is reached. A step must change the map: if it does not, give up instead of looping."""

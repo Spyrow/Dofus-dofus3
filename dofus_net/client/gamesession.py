@@ -435,6 +435,32 @@ class Session:
         else:
             raise RuntimeError("aucun changement de carte après l'utilisation de l'élément (mauvaise case d'utilisation ?)")
 
+    PROBE_FILE = "probed_doors.json"
+
+    def probe_doors(self, max_cells=8):
+        """Door discovery on the current map: try every unknown interactive element (door skills first) from the cells where its use-cell is
+        predicted (gamemaps.stand_candidates). Stops at the first one that changes the map (it is recorded by _do_use). Cells already tried
+        are remembered in knowledge/probed_doors.json. -> True if a passage was found."""
+        mid = self.map_id; m = self.mapdata()
+        if not m or mid is None: return False
+        pos = gamemaps.element_positions(mid)
+        known = {d["element"] for d in gamedoors.from_map(mid) if d.get("element")}
+        skills = {d.get("skill") for lst in gamedoors.load().values() for d in lst if d.get("skill")}
+        with self._lock: els = dict(self.elements)
+        order = sorted((e for e in els if e not in known and e in pos and els[e].get("skill")), key=lambda e: (els[e]["skill"] not in skills, e))
+        for e in order:
+            for c in gamemaps.stand_candidates(m, pos[e], max_cells):
+                tried = knowledge.load(self.PROBE_FILE, {}).get(str(mid), {}).get(str(e), [])
+                if c in tried: continue
+                with knowledge._lock:
+                    d = knowledge.load(self.PROBE_FILE, {}); d.setdefault(str(mid), {}).setdefault(str(e), []).append(c); knowledge.save(self.PROBE_FILE, d)
+                self.log("info", f"Découverte de porte : élément {e} (compétence {els[e]['skill']}) depuis la case {c}")
+                try: self._do_use(e, c)
+                except RuntimeError as err:
+                    self.log("info", f"  sans effet : {err}"); continue
+                return True
+        return False
+
     def _note_arrival(self, cell):
         """First position on a new map. An interior (no border exit) is left next to where we arrive: remember that cell as a guess of the way back."""
         left = getattr(self, "_left_map", None); mid = self.map_id
