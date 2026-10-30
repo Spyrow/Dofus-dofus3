@@ -204,7 +204,7 @@ class Autopilot:
                             block(qid, oid, f"objectif « {text} » : aucune route connue (porte non apprise ?)")
                         else: cands.append((0 if self.s.map_id == tgt else reach.get(tgt, 30), qid, oid))
                     elif o.get("type") == 0:
-                        maps = self._objective_location_maps(text, reach)
+                        maps = self._known_location_maps(oid, text, reach)
                         if maps: cands.append((reach[maps[0]], qid, oid))
                         else: block(qid, oid, f"objectif « {text} » : sous-zone ou carte introuvable")
                     else: block(qid, oid, f"objectif « {text} » : carte inconnue")
@@ -247,6 +247,12 @@ class Autopilot:
         actions, why = guide.plan(state, instruction)
         self.say("info", f"guide Groq : {why or 'aucune suggestion'}" + (f" — {len(actions)} action(s)" if actions else ""))
         return self._run_actions(actions)
+
+    def _known_location_maps(self, oid, text, reach=None):
+        """Maps for a mapless free-text objective: the exact place remembered in the quest book (coordinates) first, then the subarea named in the text."""
+        hint = questbook.get_hint(oid)
+        exact = self._hint_maps(hint) if hint and hint.get("x") is not None else []
+        return exact + [m for m in self._objective_location_maps(text, reach) if m not in exact]
 
     def _hint_maps(self, hint):
         """Maps (reachable from here, closest first) that a quest hint {x, y, subarea} points to; [] if it matches nothing known."""
@@ -458,7 +464,7 @@ class Autopilot:
         self.say("warn", "objectif non validé après l'essai des éléments de la carte"); return self.attempts[oid] < FREE_ATTEMPTS
 
     def _use_location_objective(self, qid, oid):
-        text = gamequests.objective_text(oid); maps = self._objective_location_maps(text)
+        text = gamequests.objective_text(oid); maps = self._known_location_maps(oid, text)
         if not maps:
             self.say("warn", f"objectif « {text} » : aucune carte accessible dans la sous-zone indiquée"); return False
         self.attempts[oid] += 1; self.goal = text
@@ -477,10 +483,11 @@ class Autopilot:
                     travel_failed = True; return False
                 with self.s._lock: elements = dict(self.s.elements)
                 names = [gamedata.get("interactives", e.get("interactive")) or "" for e in elements.values()]
-                if not any(any(w in name.casefold() for w in words) for name in names): continue
-                self.say("info", f"élément correspondant trouvé sur la carte {mid}")
+                unnamed = [e for e in elements.values() if e.get("interactive") is None and e.get("skill")]   # steles / vestiges have no model name
+                if not unnamed and not any(any(w in name.casefold() for w in words) for name in names): continue
+                self.say("info", f"élément correspondant trouvé sur la carte {mid}" + (f" ({len(unnamed)} sans nom)" if unnamed else ""))
                 t0 = time.time()
-                try: ok = self.s.use_for_objective(words, done, strict=True)
+                try: ok = self.s.use_for_objective(words, done, strict=False)
                 except RuntimeError as e:
                     self.say("warn", f"utilisation impossible sur la carte {mid} : {e}"); continue
                 if ok or done(): self.say("info", "objectif accompli"); return True
