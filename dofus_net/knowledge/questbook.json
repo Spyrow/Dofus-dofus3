@@ -114,7 +114,7 @@
  "quests": {
   "1632": {
    "name": "Le village dans les nuages",
-   "seen": 68,
+   "seen": 76,
    "steps": {
     "2252": {
      "name": "Le village dans les nuages",
@@ -130,7 +130,7 @@
   },
   "1639": {
    "name": "Transport peu commun",
-   "seen": 67,
+   "seen": 75,
    "steps": {
     "2259": {
      "name": "Transport peu commun",
@@ -233,7 +233,7 @@
   },
   "1648": {
    "name": "Des chafers qui marchent",
-   "seen": 4,
+   "seen": 12,
    "steps": {
     "2268": {
      "name": "Des chafers qui marchent",
@@ -249,7 +249,7 @@
   },
   "1649": {
    "name": "Produits naturels",
-   "seen": 67,
+   "seen": 75,
    "steps": {
     "2269": {
      "name": "Produits naturels",
@@ -263,7 +263,7 @@
   },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 67,
+   "seen": 75,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",
@@ -440,6 +440,16 @@
     982
    ],
    "qid": 1646
+  },
+  "9855": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793308129,
+   "map": 153880578,
+   "monsters": [
+    4049
+   ],
+   "qid": 1648
   }
  },
  "version": 1

@@ -8,7 +8,7 @@ closed (a second session on the same account kicks the first, in both directions
 Chat: the chat messages are NOT decoded yet (none in the captures so far): `Session.chat` stays empty until gamestate
 learns the message; see add_chat()."""
 import collections, json, os, threading, time
-import accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, autopilot, fightbot, questbook, login
+import knowledge, accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, autopilot, fightbot, questbook, login
 from wire import parse, dec_varint, enc_varint, f_bytes, f_varint, request
 from haapi import create_game_token, GAME_IDS
 
@@ -305,24 +305,35 @@ class Session:
         if len(path) > 1: self._walk(path)
 
     def _do_change_map(self, side):
+        """Leave the map through `side`: walk to an exit cell, then joc (some borders change the map by themselves on arrival).
+        If the server refuses, try the next exit cells; the cell that worked is remembered (knowledge/exit_cells.json) and tried first."""
         start_map = self.map_id
         m = self.mapdata(); target = (m or {}).get("neighbours", {}).get(side)
         if not m or not target: raise RuntimeError(f"pas de carte voisine ({side})")
-        best = None
+        learned = knowledge.load("exit_cells.json", {}).get(f"{start_map}:{side}", [])
+        cands = []
         for c in gamemaps.exit_cells(m, side):
             path, _ = self.plan(c)
-            if path and (best is None or len(path) < len(best)): best = path
-        if best is None: raise RuntimeError(f"aucune case de sortie atteignable ({side})")
-        if len(best) > 1: self._walk(best)
-        if self.map_id != start_map and self._mapchanged.is_set():   # some borders change the map as soon as the exit cell is reached: no joc to send
-            self.log("info", f"la carte a changé en marchant sur la case de sortie {best[-1]}"); time.sleep(1.0); return
-        for attempt in (1, 2):   # the server sometimes ignores the first request right after a (re)connection: ask once more
+            if path: cands.append((0 if c in learned else 1, len(path), c, path))
+        if not cands: raise RuntimeError(f"aucune case de sortie atteignable ({side})")
+        cands.sort(key=lambda x: x[:3])
+        for n, (_pref, _len, cell, path) in enumerate(cands[:4]):
+            if self.my_cell != cell: path, _ = self.plan(cell)
+            if not path: continue
+            if len(path) > 1: self._walk(path)
+            if self.map_id != start_map and self._mapchanged.is_set():   # some borders change the map as soon as the exit cell is reached
+                self.log("info", f"la carte a changé en marchant sur la case de sortie {cell}"); self._remember_exit(start_map, side, cell); time.sleep(1.0); return
             self._mapchanged.clear()
-            self._send(login.JOC, f_varint(2, target)); self.log("action", f"→ joc : carte voisine {side} ({target})" + (" (2e essai)" if attempt == 2 else ""))
-            if self._mapchanged.wait(8): break
-            if attempt == 2: raise RuntimeError("le serveur n'a pas changé de carte (jow)")
-            time.sleep(2.0)
-        time.sleep(1.0)   # let the new map's actors arrive (jnj) before the next decision
+            self._send(login.JOC, f_varint(2, target)); self.log("action", f"→ joc : carte voisine {side} ({target}) depuis la case {cell}")
+            if self._mapchanged.wait(6):
+                self._remember_exit(start_map, side, cell); time.sleep(1.0); return
+            self.log("warn", f"la case de sortie {cell} est refusée par le serveur" + (" : essai d'une autre case" if n < min(len(cands), 4) - 1 else ""))
+        raise RuntimeError("le serveur n'a pas changé de carte (jow) pour aucune case de sortie essayée")
+
+    def _remember_exit(self, map_id, side, cell):
+        with knowledge._lock:
+            d = knowledge.load("exit_cells.json", {}); lst = d.setdefault(f"{map_id}:{side}", [])
+            if cell not in lst: lst.insert(0, cell); knowledge.save("exit_cells.json", d)
 
     def go(self, to):
         return self.start_action(f"Aller à la case {to}", lambda: self._do_go(to))
