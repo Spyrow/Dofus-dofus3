@@ -150,10 +150,16 @@ class Autopilot:
         finally:
             self.on = False; self.goal = None; self.say("info", "arrêté")
 
+    def _world(self, map_id):
+        mi = gamedata.map_info(map_id) if map_id else None
+        return mi["world"] if mi else None
+
     def _pick(self):
-        """-> ((quest id, objective id), None) or (None, reason)."""
-        unsupported = None
+        """-> ((quest id, objective id), None) or (None, reason). Only objectives of the zone we are in (the starting zone, Astrub...); among
+        them the closest one first (steps from the current map), so the walking is as short as possible."""
+        unsupported = None; cands = []
         with self.s._lock: quests = {q: (st, dict(objs)) for q, (st, objs) in self.s.quests.items()}
+        here = self._world(self.s.map_id); reach = distances(self.s.map_id) if self.s.map_id else {}
         for qid, (_step, objs) in quests.items():
             for oid, active in objs.items():
                 if not active: continue
@@ -161,16 +167,22 @@ class Autopilot:
                 kind = "talk" if o.get("type") in TALK_TYPES | USE_TYPES else "fight" if o.get("type") in FIGHT_TYPES else None
                 if kind and kind not in self.kinds: continue
                 text = gamequests.objective_text(oid)
+                if o.get("map") and here and self._world(int(o["map"])) not in (None, here): continue      # another zone: not our business now
                 if o.get("type") in TALK_TYPES | USE_TYPES and o.get("map"):
+                    tgt = int(o["map"])
                     if self.attempts[oid] >= MAX_ATTEMPTS: unsupported = unsupported or f"objectif « {text} » : échec après {MAX_ATTEMPTS} essais"
-                    elif self.s.map_id != int(o["map"]) and route(self.s.map_id, int(o["map"])) is None and not self._can_discover(int(o["map"])):
-                        unsupported = unsupported or f"objectif « {text} » : aucune route connue (porte non apprise ?)"; continue
-                    else: return (qid, oid), None
+                    elif self.s.map_id != tgt and route(self.s.map_id, tgt) is None and not self._can_discover(tgt):
+                        unsupported = unsupported or f"objectif « {text} » : aucune route connue (porte non apprise ?)"
+                    else: cands.append((0 if self.s.map_id == tgt else reach.get(tgt, 30), qid, oid))
                 elif o.get("type") in FIGHT_TYPES and self.attempts[oid] < FIGHT_ATTEMPTS and (
                         int(o["p"][0]) in {m for ms in self.s.groups.values() for m in ms} or gamedata.monster_maps(int(o["p"][0])) or o.get("map")):
-                    return (qid, oid), None
+                    tgt = int(o["map"]) if o.get("map") else 0
+                    here_group = int(o["p"][0]) in {m for ms in self.s.groups.values() for m in ms}
+                    cands.append((0 if here_group else reach.get(tgt, 12) if tgt else 12, qid, oid))
                 elif o.get("type") in FIGHT_TYPES: unsupported = unsupported or f"objectif « {text} » : aucun groupe de ce monstre sur la carte actuelle"
                 else: unsupported = unsupported or f"objectif « {text} » : type non géré"
+        if cands:
+            _d, qid, oid = min(cands); return (qid, oid), None
         return None, ("aucun objectif géré — " + unsupported) if unsupported else "aucune quête en cours"
 
     # ---- LLM guide ----
