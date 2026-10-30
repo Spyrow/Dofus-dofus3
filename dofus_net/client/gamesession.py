@@ -555,6 +555,12 @@ class Session:
             for c in adjacent:
                 path, _ = self.plan(c)
                 if path and (best is None or len(path) < len(best)): best = path
+            if best is None:      # NPC on an island (counter, stage...): get as close as the walkable floor allows and ask from there
+                near = sorted((max(abs(a - x), abs(b - y)), c) for c in range(gamemaps.CELLS) if gamemaps.walkable(m, c) for a, b in [gamemaps.to_xy(c)])
+                for d, c in near:
+                    if d > 4: break
+                    path, _ = self.plan(c)
+                    if path: best = path; self.log("info", f"PNJ isolé : je m'approche à {d} case(s) (case {c})"); break
             if best is None: raise RuntimeError("aucune case accessible à côté du PNJ")
             if len(best) > 1: self._walk(best)
         self._dialog_event.clear()

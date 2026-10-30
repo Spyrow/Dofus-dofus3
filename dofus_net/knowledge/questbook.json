@@ -114,7 +114,7 @@
  "quests": {
   "1632": {
    "name": "Le village dans les nuages",
-   "seen": 79,
+   "seen": 88,
    "steps": {
     "2252": {
      "name": "Le village dans les nuages",
@@ -123,14 +123,16 @@
       "9763": "Aller voir Berb Nhin",
       "9764": "Aller voir Grobid",
       "9765": "Aller voir Capitaine des Kerubims",
-      "9766": "Aller voir Hollie Brok"
+      "9766": "Aller voir Hollie Brok",
+      "9767": "Retourner voir Ternette Nhin",
+      "9768": "Aller voir Fécaline la Sage"
      }
     }
    }
   },
   "1639": {
    "name": "Transport peu commun",
-   "seen": 78,
+   "seen": 87,
    "steps": {
     "2259": {
      "name": "Transport peu commun",
@@ -233,7 +235,7 @@
   },
   "1648": {
    "name": "Des chafers qui marchent",
-   "seen": 15,
+   "seen": 24,
    "steps": {
     "2268": {
      "name": "Des chafers qui marchent",
@@ -249,7 +251,7 @@
   },
   "1649": {
    "name": "Produits naturels",
-   "seen": 78,
+   "seen": 87,
    "steps": {
     "2269": {
      "name": "Produits naturels",
@@ -263,7 +265,7 @@
   },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 78,
+   "seen": 87,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",
