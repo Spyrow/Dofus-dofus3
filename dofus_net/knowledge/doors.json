@@ -903,6 +903,13 @@
    "cell": null,
    "to": 191105028,
    "stand": 189
+  },
+  {
+   "skill": 10946,
+   "element": 505359,
+   "cell": null,
+   "to": 101715463,
+   "stand": 477
   }
  ],
  "192675846": [
@@ -931,6 +938,16 @@
    "cell": null,
    "to": 119802369,
    "stand": 291
+  }
+ ],
+ "101715463": [
+  {
+   "kind": "step",
+   "element": null,
+   "skill": null,
+   "cell": 121,
+   "to": 101715461,
+   "stand": null
   }
  ]
 }

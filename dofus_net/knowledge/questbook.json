@@ -112,6 +112,24 @@
   ]
  },
  "hints": {
+  "13959": {
+   "last": 1793433343,
+   "npc": "Camille Démouleur",
+   "qid": 1975,
+   "subarea": "Cité d'Astrub",
+   "why": "guide : en [4,-17] voir Camille Démouleur",
+   "x": 4,
+   "y": -17
+  },
+  "14059": {
+   "last": 1793433343,
+   "npc": "Chacha Strubien",
+   "qid": 1973,
+   "subarea": "Cité d'Astrub",
+   "why": "guide : en [3,-20] parler au Chacha Strubien",
+   "x": 3,
+   "y": -20
+  },
   "9783": {
    "last": 1793362187,
    "npc": "Klasmor le fossoyeur",
@@ -521,7 +539,7 @@
   },
   "1973": {
    "name": "Souffre-douleur",
-   "seen": 175,
+   "seen": 184,
    "steps": {
     "2644": {
      "name": "Souffre-douleur",
@@ -542,7 +560,7 @@
   },
   "1975": {
    "name": "Ça tombe à l'eau",
-   "seen": 207,
+   "seen": 216,
    "steps": {
     "2635": {
      "name": "Ça tombe à l'eau",
@@ -574,7 +592,7 @@
   },
   "1979": {
    "name": "Combat de rue",
-   "seen": 153,
+   "seen": 162,
    "steps": {
     "2613": {
      "name": "Combat de rue",
@@ -589,7 +607,7 @@
   },
   "1980": {
    "name": "Comme un pichon hors de l'eau",
-   "seen": 89,
+   "seen": 98,
    "steps": {
     "2614": {
      "name": "Comme un pichon hors de l'eau",
@@ -604,7 +622,7 @@
   },
   "1981": {
    "name": "Déjeuner à la fourchette",
-   "seen": 111,
+   "seen": 120,
    "steps": {
     "2615": {
      "name": "Déjeuner à la fourchette",

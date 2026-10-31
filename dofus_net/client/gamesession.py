@@ -694,7 +694,7 @@ class Session:
         if not m or not target: raise RuntimeError(f"pas de carte voisine ({side})")
         bundle_target = target
         override = knowledge.load("border_targets.json", {}).get(f"{start_map}:{side}")
-        targets = [int(override)] if override else [target]
+        targets = [target, int(override)] if override and int(override) != target else [target]      # the id the real client sends (the bundle's) first, the real neighbour as a fallback
         if not override and not gamedata.get("maps", target):      # the neighbour id of the bundle is not a real map (interiors): the maps that lead in here by a door are the likely ones
             targets += [int(k) for k, lst in gamedoors.load().items() if any(e.get("to") == start_map for e in lst) and int(k) not in targets]
         learned = knowledge.load("exit_cells.json", {}).get(f"{start_map}:{side}", [])

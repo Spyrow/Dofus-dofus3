@@ -1,0 +1,41 @@
+{
+ "9738": {
+  "map": 241443329,
+  "steps": [
+   {
+    "element": 541701,
+    "kiq": true,
+    "skill": 29758,
+    "stand": 343
+   }
+  ]
+ },
+ "9739": {
+  "map": 241444353,
+  "steps": [
+   {
+    "element": 541709,
+    "kiq": true,
+    "skill": 29585,
+    "stand": 272
+   }
+  ]
+ },
+ "9772": {
+  "map": 153356296,
+  "steps": [
+   {
+    "element": 489507,
+    "kiq": true,
+    "skill": 1964,
+    "stand": 273
+   },
+   {
+    "element": 489508,
+    "kiq": true,
+    "skill": 1967,
+    "stand": 398
+   }
+  ]
+ }
+}

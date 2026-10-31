@@ -1,0 +1,17 @@
+[
+ {
+  "from": "Zone de départ",
+  "to": "Monde des Douze",
+  "map": 153880835,
+  "talk": [
+   "Maître Anemo",
+   "Portail vers Astrub"
+  ],
+  "prefer": [
+   "explorer",
+   "approcher",
+   "portail"
+  ],
+  "note": "Route des âmes [4,-3]: Maître Anemo (« partir explorer le Monde des Douze », « S'approcher du portail ») puis le Portail vers Astrub -> Temple des Douze"
+ }
+]
