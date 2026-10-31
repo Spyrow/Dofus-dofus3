@@ -715,6 +715,27 @@ class Autopilot:
         if ok: self.say("info", "objectif accompli"); return True
         self.say("warn", "objectif non validé après l'essai des éléments et des PNJ de la carte"); return self.attempts[oid] < FREE_ATTEMPTS
 
+    def _talk_hinted_npc(self, oid, maps, npc_name, done):
+        """A mapless "Chercher X" objective whose hint names an NPC: go to the hinted map and talk to that NPC (several times: a first talk may only start a chain).
+        -> True once the objective is done."""
+        ids = [int(i) for i in gamedata.npc_ids_named(npc_name)]
+        if not ids: return False
+        for mid in maps[:3]:
+            if not self._alive(): return False
+            if self.s.map_id != mid and not self._travel(mid): continue
+            time.sleep(2.0)
+            for _ in range(3):
+                actor = next((a for i in ids for a in [self._find_npc(i)] if a is not None), None)
+                if actor is None: break
+                self.say("info", f"je parle à {npc_name} (indice de l'objectif)")
+                try: self._act(f"Parler au PNJ {actor}", lambda: self.s._do_talk(actor))
+                except RuntimeError as e: self.say("warn", f"dialogue impossible : {e}"); break
+                self._dialog(); self._sleep(1.5)
+                try: self.s.sync_quests()
+                except Exception: pass
+                if done(): self.say("info", "objectif accompli"); return True
+        return done()
+
     def _use_location_objective(self, qid, oid):
         text = gamequests.objective_text(oid); maps = self._known_location_maps(oid, text)
         if not maps:
@@ -724,6 +745,8 @@ class Autopilot:
         words = [w for w in re.findall(r"[a-zéèêàç]{4,}", text.lower()) if w not in ("lire", "utiliser", "contant", "légende", "dans", "avec")]
         if "vestige" in words: words = ["vestige"]
         done = lambda: not self.s.quests.get(qid, (None, {}))[1].get(oid, False)
+        hint = questbook.get_hint(oid) or {}
+        if hint.get("npc") and re.match(r"\s*(chercher|trouver)", text.lower()) and self._talk_hinted_npc(oid, maps, hint["npc"], done): return True
         searched = set(); travel_failed = False
         def scan(candidates):
             nonlocal travel_failed

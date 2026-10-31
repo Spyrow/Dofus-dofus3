@@ -1089,11 +1089,13 @@ class Session:
         self._stop.set()
         end = time.time() + 20
         while self.status in ("connecting", "connected") and time.time() < end: time.sleep(0.3)
-        time.sleep(3)      # let the game server release the character
-        if not self.start(): return False
-        end = time.time() + timeout
-        while self.status == "connecting" and time.time() < end: time.sleep(0.3)
-        if self.status == "connected": time.sleep(3); return True      # let the map and the actors load
+        for pause in (3, 15, 30, 60):      # let the game server release the character: after a drop in a fight it may keep it for a minute
+            time.sleep(pause)
+            if not self.start(): return False
+            end = time.time() + timeout
+            while self.status == "connecting" and time.time() < end: time.sleep(0.3)
+            if self.status == "connected": time.sleep(3); return True      # let the map and the actors load
+            self.log("warn", f"reconnexion refusée ({self.error or self.status}) : nouvel essai dans {pause * 2 if pause > 3 else 15} s")
         return False
 
     def stop(self):

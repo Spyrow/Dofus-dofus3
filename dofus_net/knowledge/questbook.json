@@ -539,7 +539,7 @@
   },
   "1973": {
    "name": "Souffre-douleur",
-   "seen": 184,
+   "seen": 222,
    "steps": {
     "2644": {
      "name": "Souffre-douleur",
@@ -553,14 +553,20 @@
       "14056": "Aller voir Saketsu",
       "14057": "Vaincre x1 Lame Écorcheuse en un seul combat",
       "14058": "Aller voir Saketsu",
-      "14059": "Chercher des chachas strubiens"
+      "14059": "Chercher des chachas strubiens",
+      "14060": "Aller voir Chacha Strubien",
+      "14061": "Vaincre x1 Lame Gardienne en un seul combat",
+      "14062": "Aller voir Brigitte Sarimavek",
+      "14063": "Aller voir Nibé Lulle",
+      "14064": "Aller voir Brigitte Sarimavek",
+      "14065": "Vaincre les lames volante et véloce"
      }
     }
    }
   },
   "1975": {
    "name": "Ça tombe à l'eau",
-   "seen": 216,
+   "seen": 254,
    "steps": {
     "2635": {
      "name": "Ça tombe à l'eau",
@@ -572,7 +578,8 @@
       "13956": "Aller voir Conseillère Archie",
       "13957": "Aller voir Didier Jean",
       "13958": "Aller voir Tek Abir",
-      "13959": "Chercher Camille Démouleur"
+      "13959": "Chercher Camille Démouleur",
+      "13960": "Vaincre les gredins"
      }
     }
    }
@@ -592,7 +599,7 @@
   },
   "1979": {
    "name": "Combat de rue",
-   "seen": 162,
+   "seen": 200,
    "steps": {
     "2613": {
      "name": "Combat de rue",
@@ -607,7 +614,7 @@
   },
   "1980": {
    "name": "Comme un pichon hors de l'eau",
-   "seen": 98,
+   "seen": 136,
    "steps": {
     "2614": {
      "name": "Comme un pichon hors de l'eau",
@@ -622,7 +629,7 @@
   },
   "1981": {
    "name": "Déjeuner à la fourchette",
-   "seen": 120,
+   "seen": 158,
    "steps": {
     "2615": {
      "name": "Déjeuner à la fourchette",
