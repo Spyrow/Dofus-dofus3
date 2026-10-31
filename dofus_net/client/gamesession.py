@@ -74,9 +74,18 @@ class Session:
         self.log("error" if status == "error" else "info", {"connecting": "Connexion en cours…", "connected": "Personnage connecté",
                  "disconnected": "Déconnecté", "error": f"Erreur : {error}"}[status])
 
+    def _vitals(self):
+        """Level, life and pods for the navbar (caller holds the lock). Life: characteristic 0 is the maximum, 97 the life lost; pods: 40 is the
+        maximum, the load is the weight of the inventory stacks."""
+        if self.status != "connected": return None
+        hp_max = self.stats.get(0); lost = abs(self.stats.get(97) or 0)
+        load = sum(q * ((gamedata.get("items", g) or {}).get("weight") or 0) for g, q in self.inv.values())
+        return {"level": self.level, "hp": max(0, hp_max - lost) if hp_max else None, "hp_max": hp_max,
+                "pods": load if self.inv else None, "pods_max": self.stats.get(40)}
+
     def view(self, since=0):
         with self._lock:
-            return {"status": self.status, "error": self.error, "since": self.since, "character": self.character, "map": self.map,
+            return {"status": self.status, "error": self.error, "since": self.since, "character": self.character, "map": self.map, "vitals": self._vitals(),
                     "seq": self.seq, "log": [e for e in self.journal if e["n"] > since], "chat": [e for e in self.chat if e["n"] > since]}
 
     # ---- map state (fed by the message loop) ----

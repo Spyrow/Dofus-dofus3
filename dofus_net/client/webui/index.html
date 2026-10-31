@@ -19,7 +19,7 @@ button.p{background:var(--acc);border-color:var(--acc);color:#fff}button.d{color
 .row span:first-child{color:var(--mut)}
 .slot{padding:8px 0;border-bottom:1px dashed var(--line)}.slot:last-child{border:0}.slot em{color:var(--mut)}
 .stats{color:var(--mut);font-size:13px}.top{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
-.top h1{flex:1;margin:0;font-size:22px}.msg{color:var(--mut)}.err{color:var(--bad)}
+.vit{display:flex;gap:6px}.vit b{background:var(--card,#222);border:1px solid var(--line,#444);border-radius:6px;padding:3px 9px;font-size:13px;font-weight:600}.top h1{flex:1;margin:0;font-size:22px}.msg{color:var(--mut)}.err{color:var(--bad)}
 .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc)}
 .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}.tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 table{width:100%;border-collapse:collapse;margin-top:8px}th,td{text-align:left;padding:6px 8px;border-bottom:1px dashed var(--line);vertical-align:top}th{color:var(--mut);font-weight:500;font-size:13px}.n{text-align:right}
@@ -77,12 +77,10 @@ async function render(){
   const a=accts.find(x=>x.id===sel),m=$("#main");
   if(!a){m.innerHTML='<p class="msg">Aucun compte. Clique sur « Connecter un compte ».</p>';return}
   m.innerHTML=`<div class="top"><h1>${esc(a.label)}</h1>
-    ${a.demo?"":'<span class="badge" id="st"></span><button class="p" id="con">Connecter le personnage</button><button id="ren">Renommer</button><button id="ref">Rafraîchir le jeton</button><button class="d" id="del">Supprimer</button>'}</div>
+    ${a.demo?"":'<span class="vit" id="vit"></span><span class="badge" id="st"></span><button class="p" id="con">Connecter le personnage</button><button class="d" id="del">Supprimer</button>'}</div>
     <p class="msg err" id="acterr"></p><p class="msg" id="conmsg"></p><div id="char"><p class="msg">Chargement…</p></div>`;
   if(!a.demo){
     $("#con").onclick=()=>toggleSession(a);
-    $("#ren").onclick=async()=>{const l=prompt("Nouveau nom",a.label);if(l)await act(()=>api(`/api/accounts/${a.id}/rename`,"POST",{label:l}))};
-    $("#ref").onclick=async e=>{e.target.disabled=true;await act(()=>api(`/api/accounts/${a.id}/refresh`,"POST",{}))};
     $("#del").onclick=async()=>{if(confirm(`Supprimer « ${a.label} » ? Les jetons enregistrés seront effacés.`))await act(()=>api(`/api/accounts/${a.id}`,"DELETE"))};
   }
   paintStatus();
@@ -137,6 +135,8 @@ function paintStatus(){
   const b=$("#st");if(b){b.className="badge "+v;
     b.textContent=(v==="connected"?"● ":v==="connecting"?"◌ ":v==="error"?"✕ ":"○ ")+STL[v]
       +(v==="connected"?` · ${st.character||""}${st.map?" · "+st.map:""} · depuis ${hms(st.since)}`:v==="error"?` : ${st.error}`:"")}
+  const vt=$("#vit");if(vt){const x=v==="connected"?st.vitals:null,n=k=>k==null?"?":(+k).toLocaleString("fr-FR");
+    vt.innerHTML=x?`<b title="Niveau">Niv. ${n(x.level)}</b><b title="Points de vie">❤ ${n(x.hp)} / ${n(x.hp_max)}</b><b title="Pods">⚖ ${n(x.pods)} / ${n(x.pods_max)}</b>`:""}
   const c=$("#con");if(c){const on=v==="connected"||v==="connecting";c.textContent=on?"Déconnecter":"Connecter le personnage";c.className=on?"d":"p"}
   const li=document.querySelector(`.acc[data-id="${a.id}"] .ss`);if(li)li.innerHTML=`<span class="dot ${v}"></span>${STL[v]}`;
 }

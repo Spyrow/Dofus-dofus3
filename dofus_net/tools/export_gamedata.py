@@ -55,7 +55,7 @@ def main():
     out["spell_levels"] = {k: {"spell": v["spellId"], "grade": v["grade"], "ap": v["apCost"], "min_range": v["minRange"], "range": v["range"],
                                "cooldown": v["minCastInterval"], "max_per_turn": v["maxCastPerTurn"]} for k, v in table(dd, "spelllevels").items()}
     out["item_types"] = {k: t(v["nameId"]) for k, v in table(dd, "itemtypes").items()}
-    out["items"] = {k: {"name": t(v["nameId"]), "type": v["typeId"], "level": v["level"]} for k, v in table(dd, "items").items()}
+    out["items"] = {k: {"name": t(v["nameId"]), "type": v["typeId"], "level": v["level"], "weight": v.get("realWeight", 0)} for k, v in table(dd, "items").items()}
     out["interactives"] = {k: t(v["nameId"]) for k, v in table(dd, "interactives").items()}
     out["jobs"] = {k: t(v["nameId"]) for k, v in table(dd, "jobs").items()}
     out["breeds"] = {k: t(v["shortNameId"]) for k, v in table(dd, "breeds").items()}
