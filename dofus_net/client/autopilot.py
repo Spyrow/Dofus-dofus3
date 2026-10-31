@@ -24,6 +24,9 @@ MAX_RECONNECTS = 5                  # reconnections after a dropped connection b
 MAX_DOOR_PROBES = 10                # unknown doors tried in one search for a resource
 MAX_BORDER_EXPLORES = 25            # maps whose unknown borders are tried in one run
 MAX_NEW_QUESTS = 3                 # quests the autopilot starts by itself in one run
+GEAR_SETS = [("Piou Bleu", 491, [8244, 8232, 8214, 8220, 8238, 8226])]     # (set name, monster id, [hat, cape, amulet, ring, belt, boots]) farmed once Incarnam is done
+GEAR_SLOTS = {16: (6,), 17: (7,), 1: (0,), 9: (2, 4), 10: (3,), 11: (5,)}     # item type -> equipment positions to try
+MAX_GEAR_FIGHTS = 80
 MAX_OBJECTIVE_DEATHS = 2          # deaths on one objective before it is left alone
 MAX_DEFEATS = 3                     # defeats allowed in one autopilot run before it stops (a dungeon fight that keeps being lost)
 MAX_ATTEMPTS = 3
@@ -133,7 +136,7 @@ class DesyncError(RuntimeError):
 class Autopilot:
     def __init__(self, sess):
         self.s = sess; self.explore = 0; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.quest_id = None; self.kinds = {"talk", "fight", "craft"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False; self.fight_played = False; self._stuck = []; self._hinted = set()
-        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}; self._start_tried = set(); self._new_quests = 0; self._prefer_words = set(); self._explored = set(); self._escorts = set(); self._steps_taken = collections.deque(maxlen=40)
+        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}; self._start_tried = set(); self._new_quests = 0; self._prefer_words = set(); self._explored = set(); self._gear_skip = set(); self._incarnam_ids = None; self._escorts = set(); self._steps_taken = collections.deque(maxlen=40)
 
     # ---- control ----
     def start(self, kinds=None, llm=False, quest_id=None):
@@ -157,6 +160,48 @@ class Autopilot:
 
     def say(self, level, msg):
         self.s.log(level, "Autopilote : " + msg)
+
+    def _gear_farm(self):
+        """Once the Incarnam quests are over, farm the monsters of a low-level set (Piou Bleu) and wear what drops, before the Astrub quests.
+        Done once per character (knowledge/gear_farm.json). -> True if it did something (the main loop then starts over)."""
+        if self.quest_id is not None or not self.s.char_id: return False
+        done = knowledge.load("gear_farm.json", {})
+        for name, mon, pieces in GEAR_SETS:
+            key = f"{self.s.char_id}:{name}"
+            if done.get(key) or key in self._gear_skip: continue
+            import questreport
+            if self._incarnam_ids is None: self._incarnam_ids = set(questreport.area_quests("Incarnam"))
+            with self.s._lock: act = set(self.s.quests)
+            if act & self._incarnam_ids: return False       # the Incarnam quests first
+            self._gear_skip.add(key)      # one attempt per run: when it ends early the Astrub quests go on
+            have = lambda g: self.s.have(g) > 0 or g in self.s.equipped
+            fights = 0; self.say("info", f"panoplie « {name} » : chasse des {gamedata.quest_data('monsters', mon) or mon}")
+            while self._alive() and not all(have(g) for g in pieces) and fights < MAX_GEAR_FIGHTS:
+                self._rest_hp()
+                world = self._world(self.s.map_id); maps = [m for m in gamedata.monster_maps(mon) if self._world(m) not in (None, world)] if world else []
+                if maps and self._change_world(self._world(maps[0])) is False: self.say("warn", "retour au monde de la chasse impossible"); break
+                group = self._best_group({mon}); self.goal = f"panoplie {name} : {sum(have(g) for g in pieces)}/{len(pieces)} pièces"
+                if group is not None:
+                    try: self._act(f"Chasse : groupe {group}", lambda: self.s._do_attack(group))
+                    except RuntimeError as e: self.say("warn", f"combat impossible : {e}"); break
+                    fights += 1; time.sleep(REST_SECONDS); continue
+                dist = distances(self.s.map_id); cands = [m for m in gamedata.monster_maps(mon) if m in dist and m != self.s.map_id]
+                if not cands: self.say("warn", f"aucune carte accessible où vivent les {gamedata.quest_data('monsters', mon)}"); break
+                nxt = min(cands, key=lambda m: dist[m])
+                if not self._travel(nxt): break
+                self._sleep(2.0)
+            for g in pieces:      # wear what dropped
+                if g in self.s.equipped or self.s.have(g) <= 0: continue
+                typ = (gamedata.get("items", g) or {}).get("type")
+                for pos in GEAR_SLOTS.get(typ, ()):
+                    try: self._act(f"Équiper {gamejobs.item_name(g)}", lambda: self.s._do_equip(g, pos)); break
+                    except RuntimeError as e: self.say("warn", f"équipement impossible ({gamejobs.item_name(g)}, emplacement {pos}) : {e}")
+            got = sum(have(g) for g in pieces)
+            self.say("info", f"panoplie « {name} » : {got}/{len(pieces)} pièces après {fights} combats")
+            if all(have(g) for g in pieces) or fights >= MAX_GEAR_FIGHTS:
+                with knowledge._lock: d = knowledge.load("gear_farm.json", {}); d[key] = got; knowledge.save("gear_farm.json", d)
+            return True
+        return False
 
     def _rest_hp(self, wanted=0.8, timeout=240):
         """Do not start the next objective (it may be a fight) with the life low: wait for it to regenerate (it only does so out of combat)."""
@@ -215,6 +260,7 @@ class Autopilot:
                             time.sleep(REST_SECONDS); continue
                         if self.s.dialog: self._dialog(); continue
                         if self._dungeon_step(): continue
+                        if self._gear_farm(): continue
                         obj, why = self._pick()
                         if obj is None: obj, why2 = self._pick(any_world=True); why = why if obj is None else why2       # nothing left here: the other world (back through the portal)
                         if obj is None and time.time() - self._last_sync > 20:   # the server does not push the next step by itself: ask for the fresh state, once in a while

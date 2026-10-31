@@ -539,7 +539,7 @@
   },
   "1973": {
    "name": "Souffre-douleur",
-   "seen": 253,
+   "seen": 255,
    "steps": {
     "2644": {
      "name": "Souffre-douleur",
@@ -566,7 +566,7 @@
   },
   "1975": {
    "name": "Ça tombe à l'eau",
-   "seen": 285,
+   "seen": 287,
    "steps": {
     "2635": {
      "name": "Ça tombe à l'eau",
@@ -599,7 +599,7 @@
   },
   "1979": {
    "name": "Combat de rue",
-   "seen": 231,
+   "seen": 233,
    "steps": {
     "2613": {
      "name": "Combat de rue",
@@ -614,7 +614,7 @@
   },
   "1980": {
    "name": "Comme un pichon hors de l'eau",
-   "seen": 167,
+   "seen": 169,
    "steps": {
     "2614": {
      "name": "Comme un pichon hors de l'eau",
@@ -629,7 +629,7 @@
   },
   "1981": {
    "name": "Déjeuner à la fourchette",
-   "seen": 189,
+   "seen": 191,
    "steps": {
     "2615": {
      "name": "Déjeuner à la fourchette",
@@ -638,6 +638,19 @@
       "13782": "Ramener à Vaiguy : x2 Poire de Rose",
       "13783": "Ramener à Vaiguy : x2 Poire de Tournesol",
       "13784": "Ramener à Vaiguy : x2 Poire d'Épouvanteur"
+     }
+    }
+   }
+  },
+  "1994": {
+   "name": "Les deux font l'impair",
+   "seen": 2,
+   "steps": {
+    "2618": {
+     "name": "Les deux font l'impair",
+     "objectives": {
+      "13793": "Aller voir Milicienne de Bonta",
+      "13794": "Aller voir Milicienne de Brâkmar"
      }
     }
    }
