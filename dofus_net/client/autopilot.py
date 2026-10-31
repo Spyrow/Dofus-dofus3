@@ -23,6 +23,7 @@ MAX_HUNT_FIGHTS = 12                # fights allowed to collect one monster drop
 MAX_RECONNECTS = 5                  # reconnections after a dropped connection before the autopilot gives up
 MAX_DOOR_PROBES = 10                # unknown doors tried in one search for a resource
 MAX_BORDER_EXPLORES = 25            # maps whose unknown borders are tried in one run
+MAX_NEW_QUESTS = 3                 # quests the autopilot starts by itself in one run
 MAX_DEFEATS = 3                     # defeats allowed in one autopilot run before it stops (a dungeon fight that keeps being lost)
 MAX_ATTEMPTS = 3
 FIGHT_REPLY = re.compile(r"combat|affront|battr|d[ée]fi|attaqu|[ée]prouve|provoqu", re.I)   # replies that start a boss fight
@@ -131,7 +132,7 @@ class DesyncError(RuntimeError):
 class Autopilot:
     def __init__(self, sess):
         self.s = sess; self.explore = 0; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.quest_id = None; self.kinds = {"talk", "fight", "craft"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False; self.fight_played = False; self._stuck = []; self._hinted = set()
-        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}; self._start_tried = set(); self._prefer_words = set(); self._explored = set(); self._escorts = set(); self._steps_taken = collections.deque(maxlen=40)
+        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}; self._start_tried = set(); self._new_quests = 0; self._prefer_words = set(); self._explored = set(); self._escorts = set(); self._steps_taken = collections.deque(maxlen=40)
 
     # ---- control ----
     def start(self, kinds=None, llm=False, quest_id=None):
@@ -146,7 +147,7 @@ class Autopilot:
                 if quest_id not in self.s.quests: return False
         self.quest_id = quest_id
         self.kinds = set(kinds or ("talk", "fight", "craft")); self.llm = bool(llm) and guide.available(); self.llm_steps = 0; self._hinted = set()
-        self.on = True; self.goal = None; self._stop = threading.Event(); self.attempts.clear(); self._start_tried = set(); self._explored = set(); self._escorts = set(); self._deaths0 = getattr(self.s, "deaths", 0)
+        self.on = True; self.goal = None; self._stop = threading.Event(); self.attempts.clear(); self._start_tried = set(); self._new_quests = 0; self._explored = set(); self._escorts = set(); self._deaths0 = getattr(self.s, "deaths", 0)
         self._thread = threading.Thread(target=self._run, daemon=True); self._thread.start()
         return True
 
@@ -182,41 +183,46 @@ class Autopilot:
         self.say("info", "démarré")
         try:
             for reconnects in range(MAX_RECONNECTS + 1):
-                while self._alive():
-                    if self.s.in_fight:   # a fight already running (reconnection, manual start): play its turns instead of stopping
-                        self.say("info", "un combat est en cours : je le reprends")
-                        try: self._act("Reprise du combat", self.s._do_resume_fight)
-                        except RuntimeError as e: self.say("warn", f"combat impossible : {e}"); break
-                        time.sleep(REST_SECONDS); continue
-                    if self.s.dialog: self._dialog(); continue
-                    if self._dungeon_step(): continue
-                    obj, why = self._pick()
-                    if obj is None: obj, why2 = self._pick(any_world=True); why = why if obj is None else why2       # nothing left here: the other world (back through the portal)
-                    if obj is None and time.time() - self._last_sync > 20:   # the server does not push the next step by itself: ask for the fresh state, once in a while
-                        self._last_sync = time.time()
-                        try: self.s.sync_quests()
-                        except Exception: pass
-                        time.sleep(0.5); obj, why = self._pick()
-                    if obj is None and "aucune route" in (why or "") and self._explore_borders(): continue       # a way out nobody has used yet (interiors)
-                    if obj is None and self.quest_id is None and self._start_new_quests(): continue
-                    if obj is None:
-                        if self.llm and self._unblock(): continue
-                        if self.quest_id is None and self.llm and self.llm_steps < MAX_LLM_STEPS and self._ask_guide(why): continue
-                        self.say("info", why); break
-                    o = gamedata.quest_data('objectives', obj[1]) or {}
-                    tw = self._world(int(o["map"])) if o.get("map") else None
-                    if tw and self.s.map_id and tw != self._world(self.s.map_id):          # the objective is in another world: take the portal first
-                        if not self._change_world(tw):
-                            self.attempts[obj[1]] += 1; self.say("warn", f"impossible de rejoindre le monde « {tw} »"); time.sleep(1.0); continue
-                    if not (self._fight_objective(*obj) if o.get('type') in FIGHT_TYPES else self._objective(*obj)):
-                        self.say("info", f"objectif « {gamequests.objective_text(obj[1])} » abandonné" + ("" if self._alive() else " (arrêt demandé ou déconnexion)"))
-                        if o.get('type') == CRAFT_TYPE and self._alive(): time.sleep(0.5); continue   # a craft that lacks a drop must not stop the other quests (_pick skips it after MAX_ATTEMPTS)
-                        if self.llm and self._alive():      # the bot gave up on it: maybe Groq knows where it really is
-                            self._stuck = [obj]
-                            if self._unblock(): continue
-                        if self._alive() and self.attempts[obj[1]] > 0: time.sleep(0.5); continue      # the other objectives may unlock it (a quest needing two items); _pick skips this one once its tries are used
-                        break
-                    time.sleep(0.5)
+                try:
+                    while self._alive():
+                        if self.s.in_fight:   # a fight already running (reconnection, manual start): play its turns instead of stopping
+                            self.say("info", "un combat est en cours : je le reprends")
+                            try: self._act("Reprise du combat", self.s._do_resume_fight)
+                            except RuntimeError as e: self.say("warn", f"combat impossible : {e}"); break
+                            time.sleep(REST_SECONDS); continue
+                        if self.s.dialog: self._dialog(); continue
+                        if self._dungeon_step(): continue
+                        obj, why = self._pick()
+                        if obj is None: obj, why2 = self._pick(any_world=True); why = why if obj is None else why2       # nothing left here: the other world (back through the portal)
+                        if obj is None and time.time() - self._last_sync > 20:   # the server does not push the next step by itself: ask for the fresh state, once in a while
+                            self._last_sync = time.time()
+                            try: self.s.sync_quests()
+                            except Exception: pass
+                            time.sleep(0.5); obj, why = self._pick()
+                        if obj is None and "aucune route" in (why or "") and self._explore_borders(): continue       # a way out nobody has used yet (interiors)
+                        if obj is None and self.quest_id is None and self._start_new_quests(): continue
+                        if obj is None:
+                            if self.llm and self._unblock(): continue
+                            if self.quest_id is None and self.llm and self.llm_steps < MAX_LLM_STEPS and self._ask_guide(why): continue
+                            self.say("info", why); break
+                        o = gamedata.quest_data('objectives', obj[1]) or {}
+                        tw = self._world(int(o["map"])) if o.get("map") else None
+                        if tw and self.s.map_id and tw != self._world(self.s.map_id):          # the objective is in another world: take the portal first
+                            if not self._change_world(tw):
+                                self.attempts[obj[1]] += 1; self.say("warn", f"impossible de rejoindre le monde « {tw} »"); time.sleep(1.0); continue
+                        if not (self._fight_objective(*obj) if o.get('type') in FIGHT_TYPES else self._objective(*obj)):
+                            self.say("info", f"objectif « {gamequests.objective_text(obj[1])} » abandonné" + ("" if self._alive() else " (arrêt demandé ou déconnexion)"))
+                            if o.get('type') == CRAFT_TYPE and self._alive(): time.sleep(0.5); continue   # a craft that lacks a drop must not stop the other quests (_pick skips it after MAX_ATTEMPTS)
+                            if self.llm and self._alive():      # the bot gave up on it: maybe Groq knows where it really is
+                                self._stuck = [obj]
+                                if self._unblock(): continue
+                            if self._alive() and self.attempts[obj[1]] > 0: time.sleep(0.5); continue      # the other objectives may unlock it (a quest needing two items); _pick skips this one once its tries are used
+                            break
+                        time.sleep(0.5)
+                except DesyncError as e:      # the server refuses every move: our position is stale, a new connection tells the real one
+                    self.say("warn", f"{e} : reconnexion ({reconnects + 1}/{MAX_RECONNECTS})")
+                    if reconnects >= MAX_RECONNECTS or not self.s.reconnect(): self.say("error", "reconnexion impossible"); break
+                    continue
                 if self._stop.is_set() or self.s.status == "connected": break       # a normal end
                 if reconnects >= MAX_RECONNECTS: self.say("error", f"connexion perdue {MAX_RECONNECTS} fois : arrêt"); break
                 self.say("warn", f"connexion perdue : je me reconnecte et je reprends ({reconnects + 1}/{MAX_RECONNECTS})")
@@ -267,6 +273,7 @@ class Autopilot:
                 kind = "talk" if o.get("type") in TALK_TYPES | USE_TYPES | {DISCOVER_TYPE} else "fight" if o.get("type") in FIGHT_TYPES else "craft" if o.get("type") == CRAFT_TYPE else None
                 if kind and kind not in self.kinds: continue
                 text = gamequests.objective_text(oid)
+                if o.get("type") == 0 and re.match(r"\s*r[ée]gler le probl[èe]me", text or "", re.I): continue      # umbrella objective: done by the sub-quests it started
                 if o.get("map") and here and not any_world and self._world(int(o["map"])) not in (None, here): continue      # another zone: not our business now
                 if o.get("type") in TALK_TYPES | USE_TYPES:
                     if self.attempts[oid] >= (FREE_ATTEMPTS if o.get("type") in USE_TYPES else MAX_ATTEMPTS):
@@ -1031,7 +1038,7 @@ class Autopilot:
         info = gamedata.map_info(self.s.map_id) if self.s.map_id else None
         if not info: return False
         with self.s._lock: done = set(self.s.finished_quests); active = set(self.s.quests)
-        if not done: return False          # the finished list comes with the login: without it everything would look unstarted
+        if not done or self._new_quests >= MAX_NEW_QUESTS: return False      # finish what is started before opening more          # the finished list comes with the login: without it everything would look unstarted
         for qid, q in sorted(questreport.area_quests(info["area"]).items(), key=lambda kv: (kv[1]["level"] or 0, kv[0])):
             if qid in done or qid in active or qid in self._start_tried or str(qid) in knowledge.load("quests_ignored.json", {}): continue
             if self.s.level and q["level"] and q["level"] > self.s.level + 4: continue      # too hard for now: the list is sorted by level, the next ones are even harder
@@ -1043,7 +1050,7 @@ class Autopilot:
                 self._sleep(2.0)
                 try: self._act(f"Accepter la quête {q['name']}", lambda: self.s._do_accept_offer(qid, int(offer["element"]), offer.get("stand")))
                 except RuntimeError as e: self.say("warn", f"offre impossible : {e}"); continue
-                self.say("event", f"quête « {q['name']} » démarrée"); return True
+                self._new_quests += 1; self.say("event", f"quête « {q['name']} » démarrée"); return True
             st = questreport.starter(q["name"])
             if not st: self.say("info", f"quête « {q['name']} » : PNJ de départ introuvable dans le guide, je la laisse"); continue
             npc, ids, maps = st
@@ -1061,7 +1068,7 @@ class Autopilot:
             try: self.s.sync_quests()
             except Exception: pass
             with self.s._lock: started = qid in self.s.quests or qid in self.s.finished_quests
-            if started: self.say("event", f"quête « {q['name']} » démarrée"); return True
+            if started: self._new_quests += 1; self.say("event", f"quête « {q['name']} » démarrée"); return True
             self.say("warn", f"« {q['name']} » n'a pas démarré après le dialogue avec {npc}")
         return False
 
@@ -1203,7 +1210,7 @@ class Autopilot:
                 n = gamejobs.norm(w)
                 if len(n) >= 5 and n in words: sc += 3 if (i > 0 and w[0].isupper()) else 1
             if any(p and p in gamejobs.norm(text) for p in self._prefer_words): sc += 6      # the item being bought
-            tn = gamejobs.norm(text).strip(" .!?")
+            tn = gamejobs.squash(text)
             if any(len(q) >= 6 and (q in tn or tn in q) for q in quotes): sc += 10      # the guide quotes this very reply
             return sc
         scored = sorted(((score(x["text"]), x) for x in replies if not REFUSE.search(x["text"])), key=lambda t: -t[0])

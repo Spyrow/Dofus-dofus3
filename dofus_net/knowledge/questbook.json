@@ -521,7 +521,7 @@
   },
   "1973": {
    "name": "Souffre-douleur",
-   "seen": 10,
+   "seen": 175,
    "steps": {
     "2644": {
      "name": "Souffre-douleur",
@@ -542,7 +542,7 @@
   },
   "1975": {
    "name": "Ça tombe à l'eau",
-   "seen": 42,
+   "seen": 207,
    "steps": {
     "2635": {
      "name": "Ça tombe à l'eau",
@@ -553,7 +553,66 @@
       "13955": "Aller voir Didier Jean",
       "13956": "Aller voir Conseillère Archie",
       "13957": "Aller voir Didier Jean",
-      "13958": "Aller voir Tek Abir"
+      "13958": "Aller voir Tek Abir",
+      "13959": "Chercher Camille Démouleur"
+     }
+    }
+   }
+  },
+  "1978": {
+   "name": "Bière qui roule n'amasse pas mousse",
+   "seen": 3,
+   "steps": {
+    "2612": {
+     "name": "Bière qui roule n'amasse pas mousse",
+     "objectives": {
+      "13769": "Aller voir Tek Abir",
+      "13770": "Ramener à Badufron : x1 Bière Mousseuse d'Astrub"
+     }
+    }
+   }
+  },
+  "1979": {
+   "name": "Combat de rue",
+   "seen": 153,
+   "steps": {
+    "2613": {
+     "name": "Combat de rue",
+     "objectives": {
+      "13771": "Régler le problème de Bart Cousti",
+      "13772": "Régler le problème de Vaiguy",
+      "13773": "Régler le problème de Jeffrey Baratourte",
+      "13774": "Régler le problème de Cindy Cah"
+     }
+    }
+   }
+  },
+  "1980": {
+   "name": "Comme un pichon hors de l'eau",
+   "seen": 89,
+   "steps": {
+    "2614": {
+     "name": "Comme un pichon hors de l'eau",
+     "objectives": {
+      "13776": "Vaincre x3 Pichon Blanc",
+      "13777": "Vaincre x3 Pichon Bleu",
+      "13778": "Vaincre x3 Pichon Orange",
+      "13779": "Vaincre x3 Pichon Vert"
+     }
+    }
+   }
+  },
+  "1981": {
+   "name": "Déjeuner à la fourchette",
+   "seen": 111,
+   "steps": {
+    "2615": {
+     "name": "Déjeuner à la fourchette",
+     "objectives": {
+      "13781": "Ramener à Vaiguy : x2 Poire de Pissenlit",
+      "13782": "Ramener à Vaiguy : x2 Poire de Rose",
+      "13783": "Ramener à Vaiguy : x2 Poire de Tournesol",
+      "13784": "Ramener à Vaiguy : x2 Poire d'Épouvanteur"
      }
     }
    }

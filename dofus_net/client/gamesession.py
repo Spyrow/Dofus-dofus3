@@ -733,6 +733,10 @@ class Session:
                     self.log("event", f"Sortie {side} de {start_map} → {self.map_id} (≠ carte voisine du fichier)")
                 time.sleep(1.0); return
             self.log("warn", f"la case de sortie {cell} est refusée par le serveur" + (" : essai d'une autre case" if n < min(len(cands), 4) - 1 else ""))
+        if override:      # a learned exit that no cell can use any more is wrong: forget it, the planner then looks for another way
+            with knowledge._lock:
+                d = knowledge.load("border_targets.json", {}); d.pop(f"{start_map}:{side}", None); knowledge.save("border_targets.json", d)
+            self.log("warn", f"sortie {side} de {start_map} oubliée (elle ne marche plus)")
         raise RuntimeError("le serveur n'a pas changé de carte (jow) pour aucune case de sortie essayée")
 
     def _remember_exit(self, map_id, side, cell):
@@ -827,6 +831,7 @@ class Session:
                     d = knowledge.load(self.PROBE_FILE, {}); d.setdefault(str(mid), {}).setdefault(str(e), []).append(c); knowledge.save(self.PROBE_FILE, d)
                 self.log("info", f"Découverte de porte : élément {e} (compétence {els[e]['skill']}) depuis la case {c}")
                 try: self._do_use(e, c)
+                except autopilot.DesyncError: raise      # the server does not see us where we think: trying more cells is pointless, the caller reconnects
                 except RuntimeError as err:
                     self.log("info", f"  sans effet : {err}"); self._unlock_after_use(c); continue
                 return True
@@ -877,6 +882,7 @@ class Session:
                     if self._do_use(e, c, until):
                         self._send("kiq"); time.sleep(0.6)      # an examined object may leave its interface open (the first move would be swallowed)
                         return True
+                except autopilot.DesyncError: raise
                 except RuntimeError as err: self.log("info", f"  sans effet : {err}")
                 if self.map_id != mid: return False      # it was a door: the caller travels back
         return False

@@ -12,18 +12,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import accounts, boost, gamesession, groq, questbook
-try: import account_creator
-except Exception as _e:      # e.g. smtpd was removed in Python 3.12: the rest of the web UI (accounts, quests, bot) must still start
-    class account_creator:
-        reason = f"{type(_e).__name__}: {_e}"
-        @staticmethod
-        def list_creations(): return []
-        @staticmethod
-        def create_account(*a, **k): raise RuntimeError("création de compte indisponible : " + account_creator.reason)
-        @staticmethod
-        def confirm(*a, **k): return {"error": "création de compte indisponible : " + account_creator.reason}
-        @staticmethod
-        def start_smtp(): print("account_creator indisponible :", account_creator.reason, file=sys.stderr)
 from pkce_login import login
 
 DEMO = {"id": "demo", "label": "Démo (données fictives)", "added": None, "refreshed": None, "snapshot": None, "demo": True}
@@ -121,8 +109,6 @@ class H(BaseHTTPRequestHandler):
             self._json(gamesession.session(m[1]).questview())
         elif p == "/api/groq":
             self._json({"configured": groq.configured(), "model": groq.model()})   # never the key
-        elif p == "/api/account/create":
-            self._json(account_creator.list_creations())
         elif p == "/api/questbook":
             self._json(questbook.summary())
         elif m := re.fullmatch(r"/api/accounts/(\w+)/recent", p):   # diagnostics: the last messages received from the game server
@@ -157,28 +143,6 @@ class H(BaseHTTPRequestHandler):
                 login_state.update(status="waiting", error=None)
             threading.Thread(target=_login_worker, args=(str(body.get("label") or "").strip()[:40],), daemon=True).start()
             self._json(login_state, 202)
-        elif p == "/api/account/create":
-            email = str(body.get("email") or "").strip()
-            password = str(body.get("password") or "").strip()
-            firstname = str(body.get("firstname") or "").strip()
-            lastname = str(body.get("lastname") or "").strip()
-            birthdate = str(body.get("birthdate") or "").strip()
-            if not (email and password and firstname and lastname and birthdate):
-                return self._json({"error": "tous les champs sont obligatoires"}, 400)
-            try:
-                r = account_creator.create_account(email, password, firstname, lastname, birthdate)
-            except Exception as e:
-                return self._json({"error": str(e)}, 502)
-            if r is None: return self._json({"error": "creation introuvable"}, 500)
-            if r.get("status") == "failed": return self._json({"error": r.get("error", "echec")}, 502)
-            self._json(r, 202)
-        elif p == "/api/account/create/confirm":
-            cid = str(body.get("id") or "").strip()
-            code = str(body.get("code") or "").strip()
-            if not cid or not code: return self._json({"error": "identifiant et code requis"}, 400)
-            r = account_creator.confirm(cid, code)
-            if "error" in r: return self._json({"error": r["error"]}, 400)
-            self._json(r, 200)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/(connect|disconnect)", p):
             if not accounts.get(m[1]): return self._json({"error": "not found"}, 404)
             sess = gamesession.session(m[1])
@@ -287,7 +251,6 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", type=int, default=8765)
     a = ap.parse_args()
-    account_creator.start_smtp()
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), H)
     print(f"http://127.0.0.1:{a.port}", file=sys.stderr)
     try: srv.serve_forever()
