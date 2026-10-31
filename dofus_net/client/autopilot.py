@@ -24,6 +24,7 @@ MAX_RECONNECTS = 5                  # reconnections after a dropped connection b
 MAX_DOOR_PROBES = 10                # unknown doors tried in one search for a resource
 MAX_BORDER_EXPLORES = 25            # maps whose unknown borders are tried in one run
 MAX_NEW_QUESTS = 3                 # quests the autopilot starts by itself in one run
+MAX_OBJECTIVE_DEATHS = 2          # deaths on one objective before it is left alone
 MAX_DEFEATS = 3                     # defeats allowed in one autopilot run before it stops (a dungeon fight that keeps being lost)
 MAX_ATTEMPTS = 3
 FIGHT_REPLY = re.compile(r"combat|affront|battr|d[ée]fi|attaqu|[ée]prouve|provoqu", re.I)   # replies that start a boss fight
@@ -157,6 +158,26 @@ class Autopilot:
     def say(self, level, msg):
         self.s.log(level, "Autopilote : " + msg)
 
+    def _rest_hp(self, wanted=0.8, timeout=240):
+        """Do not start the next objective (it may be a fight) with the life low: wait for it to regenerate (it only does so out of combat)."""
+        end = time.time() + timeout; announced = False
+        while self._alive() and time.time() < end:
+            with self.s._lock: v = self.s._vitals() or {}
+            hp, mx = v.get("hp"), v.get("hp_max")
+            if not hp or not mx or hp >= wanted * mx: return
+            if not announced: self.say("info", f"vie basse ({hp}/{mx}) : je me repose avant le prochain objectif"); announced = True
+            time.sleep(10)
+
+    def _note_deaths(self, oid, n):
+        """Deaths while working on an objective, remembered in knowledge/dangerous_objectives.json: from MAX_OBJECTIVE_DEATHS the objective is left alone
+        (the fight is too hard for this character), here and in later runs."""
+        if n <= 0: return
+        with knowledge._lock:
+            d = knowledge.load("dangerous_objectives.json", {}); d[str(oid)] = d.get(str(oid), 0) + n; knowledge.save("dangerous_objectives.json", d)
+        total = d[str(oid)]
+        self.say("warn", f"{total} défaite(s) sur l'objectif « {gamequests.objective_text(oid)} »")
+        if total >= MAX_OBJECTIVE_DEATHS: self.attempts[oid] = 99; self.say("warn", "objectif mis de côté : combat trop dur pour ce personnage")
+
     def _alive(self):
         return not self._stop.is_set() and self.s.status == "connected"
 
@@ -181,6 +202,8 @@ class Autopilot:
     # ---- main loop ----
     def _run(self):
         self.say("info", "démarré")
+        for oid, n in knowledge.load("dangerous_objectives.json", {}).items():      # objectives that already killed the character in earlier runs
+            if n >= MAX_OBJECTIVE_DEATHS: self.attempts[int(oid)] = 99; self.say("info", f"objectif « {gamequests.objective_text(int(oid))} » ignoré ({n} défaites passées)")
         try:
             for reconnects in range(MAX_RECONNECTS + 1):
                 try:
@@ -210,7 +233,11 @@ class Autopilot:
                         if tw and self.s.map_id and tw != self._world(self.s.map_id):          # the objective is in another world: take the portal first
                             if not self._change_world(tw):
                                 self.attempts[obj[1]] += 1; self.say("warn", f"impossible de rejoindre le monde « {tw} »"); time.sleep(1.0); continue
-                        if not (self._fight_objective(*obj) if o.get('type') in FIGHT_TYPES else self._objective(*obj)):
+                        self._rest_hp()
+                        deaths0 = getattr(self.s, "deaths", 0)
+                        done = self._fight_objective(*obj) if o.get('type') in FIGHT_TYPES else self._objective(*obj)
+                        self._note_deaths(obj[1], getattr(self.s, "deaths", 0) - deaths0)
+                        if not done:
                             self.say("info", f"objectif « {gamequests.objective_text(obj[1])} » abandonné" + ("" if self._alive() else " (arrêt demandé ou déconnexion)"))
                             if o.get('type') == CRAFT_TYPE and self._alive(): time.sleep(0.5); continue   # a craft that lacks a drop must not stop the other quests (_pick skips it after MAX_ATTEMPTS)
                             if self.llm and self._alive():      # the bot gave up on it: maybe Groq knows where it really is
