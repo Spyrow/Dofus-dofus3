@@ -506,11 +506,12 @@ class Session:
                 for amount in ((first, n - first) if not verified and n > 1 else (n,)):
                     if amount <= 0: continue
                     before = dict(self.base); self._krg_event.clear()
-                    self._send(boost.KRC, f_varint(field, amount)); self.log("action", f"→ krc : {boost.STATS[cid]} +{amount} (champ {field})")
+                    target = before.get(cid, 0) + amount      # the krc value is the NEW base of the characteristic, not an increment (it only looked like one from a base of 0)
+                    self._send(boost.KRC, f_varint(field, target)); self.log("action", f"→ krc : {boost.STATS[cid]} {before.get(cid, 0)} → {target} (champ {field})")
                     if not self._wait_krg(): raise RuntimeError("le serveur n'a pas confirmé la répartition (pas de krg)")
                     moved = {c: self.base.get(c, 0) - before.get(c, 0) for c in boost.STATS if self.base.get(c, 0) != before.get(c, 0)}
                     spent = (before.get(boost.POINTS) or 0) - (self.base.get(boost.POINTS) or 0)
-                    if cid in moved and moved[cid] >= amount:
+                    if moved.get(cid, 0) > 0:      # the server may buy fewer boosts than planned (the price rises with the value)
                         if not verified: boost.verify(cid, field); verified = True; self.log("event", f"Champ {field} = {boost.STATS[cid]} confirmé")
                     elif moved:
                         real = max(moved, key=lambda c: moved[c])
