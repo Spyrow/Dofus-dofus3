@@ -161,6 +161,17 @@ def jobs(body):
     return out
 
 
+EQUIPMENT_TYPES = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19, 20, 21, 22, 23, 82, 114, 121, 151, 164, 169}      # worn / wielded
+QUEST_TYPES = {25, 80, 84, 126, 127, 128, 132, 133, 136, 137, 139, 140, 141, 142, 143, 144, 146, 147, 149, 150, 155}                                                                                 # documents, mission items, keys, quest tokens
+CONSUMABLE_TYPES = {12, 13, 28, 29, 30, 33, 37, 42, 43, 49, 69, 75, 76, 79, 94, 165, 173}                                 # potions, food, scrolls, usable items
+
+
+def item_category(type_id):
+    """Inventory tab an item type belongs to: equipement / consommable / quete / ressource (everything else)."""
+    return ("equipement" if type_id in EQUIPMENT_TYPES else "quete" if type_id in QUEST_TYPES
+            else "consommable" if type_id in CONSUMABLE_TYPES else "ressource")
+
+
 def _item_view(it):
     meta = gamedata.get("items", it["gid"])
     stats = []
@@ -169,7 +180,7 @@ def _item_view(it):
         if txt: stats.append(txt)
     return {"name": meta["name"] if meta else f"Objet #{it['gid']}",
             "type": (gamedata.get("item_types", meta["type"]) if meta else None) or "",
-            "level": meta["level"] if meta else None, "qty": it["qty"],
+            "level": meta["level"] if meta else None, "qty": it["qty"], "cat": item_category(meta["type"]) if meta else "ressource",
             "equipped": it["position"] not in (None, NOT_EQUIPPED), "stats": stats}
 
 
