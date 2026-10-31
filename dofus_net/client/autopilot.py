@@ -175,7 +175,7 @@ class Autopilot:
             if act & self._incarnam_ids: return False       # the Incarnam quests first
             self._gear_skip.add(key)      # one attempt per run: when it ends early the Astrub quests go on
             have = lambda g: self.s.have(g) > 0 or g in self.s.equipped
-            fights = 0; self.say("info", f"panoplie « {name} » : chasse des {gamedata.quest_data('monsters', mon) or mon}")
+            fights = 0; visited = set(); failed = set(); self.say("info", f"panoplie « {name} » : chasse des {gamedata.quest_data('monsters', mon) or mon}")
             while self._alive() and not all(have(g) for g in pieces) and fights < MAX_GEAR_FIGHTS:
                 self._rest_hp()
                 world = self._world(self.s.map_id); maps = [m for m in gamedata.monster_maps(mon) if self._world(m) not in (None, world)] if world else []
@@ -185,10 +185,12 @@ class Autopilot:
                     try: self._act(f"Chasse : groupe {group}", lambda: self.s._do_attack(group))
                     except RuntimeError as e: self.say("warn", f"combat impossible : {e}"); break
                     fights += 1; time.sleep(REST_SECONDS); continue
-                dist = distances(self.s.map_id); cands = [m for m in gamedata.monster_maps(mon) if m in dist and m != self.s.map_id]
+                dist = distances(self.s.map_id); visited.add(self.s.map_id)
+                cands = [m for m in gamedata.monster_maps(mon) if m in dist and m not in visited and m not in failed]
                 if not cands: self.say("warn", f"aucune carte accessible où vivent les {gamedata.quest_data('monsters', mon)}"); break
                 nxt = min(cands, key=lambda m: dist[m])
-                if not self._travel(nxt): break
+                self.say("info", f"aucun groupe de Piou ici : je vais sur la carte {nxt}")
+                if not self._travel(nxt): failed.add(nxt); continue      # a map behind a door nobody opened: try the next one
                 self._sleep(2.0)
             for g in pieces:      # wear what dropped
                 if g in self.s.equipped or self.s.have(g) <= 0: continue
