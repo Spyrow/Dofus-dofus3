@@ -77,13 +77,32 @@ def record_step(frm, cell, to):
         return True
 
 
+QUEST_SKILL_TYPE = 184      # the "examine" skill a quest adds to an element (the zaap has it next to its own use skill 114)
+
+
+def _skill(entry):
+    """Skill {1: id, 3: type} of an element entry (jnj field 7 / itx field 1). An element can carry several (a quest-only one next to its
+    normal one): the quest skill wins, else the last one, as before."""
+    skills = [dict(parse(x)) for f, x in parse(entry) if f == 5 and isinstance(x, bytes)]
+    return next((s for s in skills if s.get(3) == QUEST_SKILL_TYPE), skills[-1] if skills else {})
+
+
+def itx(body):
+    """itx body -> (element id, skill, type) or None."""
+    for f, v in parse(body):
+        if f == 1 and isinstance(v, bytes):
+            e = dict(parse(v)); s = _skill(v)
+            if isinstance(e.get(6), int) and s.get(1): return e[6], s.get(1), s.get(3)
+    return None
+
+
 def elements(jnj_body):
     """jnj body -> {element id: {"skill": itz.1, "interactive": element model id (table `interactives`) or None, "type": skill type,
     "cell": None}}. The element's cell is NOT in this message (field 5.2 is not a cell)."""
     out = {}
     for f, v in parse(jnj_body):
         if f != 7 or not isinstance(v, bytes): continue
-        e = dict(parse(v)); five = dict(parse(e[5])) if isinstance(e.get(5), bytes) else {}
+        e = dict(parse(v)); five = _skill(v)
         model = e.get(4) if isinstance(e.get(4), int) and e.get(4) < 1 << 40 else None
         if isinstance(e.get(6), int): out[e[6]] = {"skill": five.get(1), "interactive": model, "type": five.get(3), "cell": None}
     for f, v in parse(jnj_body):          # field 2: the resources of the map with their real cell {3: element id, 4: cell} (doors and workshops are not listed)

@@ -188,7 +188,7 @@
  "quests": {
   "1632": {
    "name": "Le village dans les nuages",
-   "seen": 95,
+   "seen": 126,
    "steps": {
     "2252": {
      "name": "Le village dans les nuages",
@@ -221,7 +221,7 @@
   },
   "1634": {
    "name": "Espoirs et tragédies",
-   "seen": 119,
+   "seen": 148,
    "steps": {
     "2254": {
      "name": "Espoirs et tragédies",
@@ -238,7 +238,7 @@
   },
   "1635": {
    "name": "Dans la gueule du Milimilou",
-   "seen": 482,
+   "seen": 534,
    "steps": {
     "2255": {
      "name": "Dans la gueule du Milimilou",
@@ -254,7 +254,7 @@
   },
   "1637": {
    "name": "La galette secrète",
-   "seen": 57,
+   "seen": 87,
    "steps": {
     "2257": {
      "name": "La galette secrète",
@@ -285,7 +285,7 @@
   },
   "1639": {
    "name": "Transport peu commun",
-   "seen": 510,
+   "seen": 552,
    "steps": {
     "2259": {
      "name": "Transport peu commun",
@@ -299,7 +299,7 @@
   },
   "1640": {
    "name": "Des vestiges de légende",
-   "seen": 88,
+   "seen": 116,
    "steps": {
     "2260": {
      "name": "Des vestiges de légende",
@@ -316,7 +316,7 @@
   },
   "1641": {
    "name": "Vu du ciel",
-   "seen": 145,
+   "seen": 188,
    "steps": {
     "2261": {
      "name": "Vu du ciel",
@@ -332,7 +332,7 @@
   },
   "1642": {
    "name": "Mise à l'épreuve",
-   "seen": 13,
+   "seen": 80,
    "steps": {
     "2262": {
      "name": "Mise à l'épreuve",
@@ -422,7 +422,7 @@
   },
   "1648": {
    "name": "Des chafers qui marchent",
-   "seen": 642,
+   "seen": 672,
    "steps": {
     "2268": {
      "name": "Des chafers qui marchent",
@@ -441,7 +441,7 @@
   },
   "1649": {
    "name": "Produits naturels",
-   "seen": 297,
+   "seen": 371,
    "steps": {
     "2269": {
      "name": "Produits naturels",
@@ -496,7 +496,7 @@
   },
   "1655": {
    "name": "Un peu de pigment",
-   "seen": 8,
+   "seen": 10,
    "steps": {
     "2275": {
      "name": "Un peu de pigment",
@@ -539,7 +539,7 @@
   },
   "1973": {
    "name": "Souffre-douleur",
-   "seen": 427,
+   "seen": 456,
    "steps": {
     "2644": {
      "name": "Souffre-douleur",
@@ -592,7 +592,7 @@
   },
   "1976": {
    "name": "Six pieds sous terre",
-   "seen": 101,
+   "seen": 130,
    "steps": {
     "2636": {
      "name": "Six pieds sous terre",
@@ -619,7 +619,7 @@
   },
   "1979": {
    "name": "Combat de rue",
-   "seen": 329,
+   "seen": 358,
    "steps": {
     "2613": {
      "name": "Combat de rue",
@@ -664,7 +664,7 @@
   },
   "1992": {
    "name": "Chacha Blues",
-   "seen": 89,
+   "seen": 118,
    "steps": {
     "2653": {
      "name": "Chacha Blues",
@@ -745,7 +745,7 @@
   },
   "826": {
    "name": "La fin du règne",
-   "seen": 45,
+   "seen": 55,
    "steps": {
     "1449": {
      "name": "La fin du règne",
@@ -762,7 +762,7 @@
   },
   "894": {
    "name": "Mieux vaut ne pas se fier à la première impression",
-   "seen": 75,
+   "seen": 104,
    "steps": {
     "1510": {
      "name": "Mieux vaut ne pas se fier à la première impression",

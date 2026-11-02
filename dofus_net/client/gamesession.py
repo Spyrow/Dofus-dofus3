@@ -7,7 +7,7 @@ closed (a second session on the same account kicks the first, in both directions
 
 Chat: the chat messages are NOT decoded yet (none in the captures so far): `Session.chat` stays empty until gamestate
 learns the message; see add_chat()."""
-import collections, json, os, threading, time
+import collections, json, os, re, threading, time
 import boost, knowledge, accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, gamejobs, gameachievements, autopilot, fightbot, questbook, login
 from wire import parse, dec_varint, enc_varint, f_bytes, f_varint, request
 from haapi import create_game_token, GAME_IDS
@@ -118,12 +118,27 @@ class Session:
                 self.map_id, self.my_cell, self.actors, self.npcs, self.elements, self.groups = mid, None, {}, {}, {}, {}
                 self.arrival_cell = None
             self._mapchanged.set()
+        elif t == login.ITX:      # a quest added (or removed) a skill on an element: use the current one
+            try: upd = gamedoors.itx(body)
+            except (ValueError, IndexError): upd = None
+            if upd:
+                with self._lock:
+                    el = self.elements.get(upd[0])
+                    if el is not None and el.get("skill") != upd[1]:
+                        self.log("info", f"Élément {upd[0]} : compétence {el.get('skill')} → {upd[1]} (type {upd[2]})")
+                        el["skill"], el["type"] = upd[1], upd[2]
         elif t in (login.JNJ, login.JNS):      # jnj {3: [entry]} / jns {1: entry}; entry = {1: actor id, 2: {3: cell, 4: direction}, 3: ...}
             for f, v in parse(body):
                 if f != (3 if t == login.JNJ else 1) or not isinstance(v, bytes): continue
                 self._register_actor(v)
             if t == login.JNJ:
                 with self._lock: self.elements.update(gamedoors.elements(body))
+                for f, v in parse(body):      # field 2: the map's resources {3: element, 4: cell, 5: state}; state present (1 harvested, 2 being harvested) = nothing to take now
+                    if f == 2 and isinstance(v, bytes):
+                        r = dict(parse(v))
+                        if isinstance(r.get(3), int):
+                            if r.get(5) in (1, 2): self.unavailable[r[3]] = float("inf")
+                            else: self.unavailable.pop(r[3], None)
         elif t == login.JXI:
             self.log("event", "Combat engagé")
         elif t == login.JWP:
@@ -235,7 +250,9 @@ class Session:
                 with knowledge._lock:
                     d = knowledge.load("element_cells.json", {}); m = d.setdefault(str(self.map_id), {})
                     if m.get(str(el)) != cell: m[str(el)] = cell; knowledge.save("element_cells.json", d)
-            if state in (1, 2) and el is not None: self.unavailable[el] = time.time() + 45   # being harvested / growing back
+            if el is not None:      # capture of a harvest: itw without state = the resource is back, 2 = being harvested, 1 = harvested (growing back, no end seen after 70 s)
+                if state in (1, 2): self.unavailable[el] = float("inf")
+                else: self.unavailable.pop(el, None)
         elif t == gamejobs.ITV:
             if gamejobs._int(body, 4) == self.char_id: self._harvest_started.set()
         elif t == gamejobs.ITT: self._harvest_end.set()
@@ -315,7 +332,7 @@ class Session:
             if self._harvest_started.wait(3): break
             self._unlock_after_use(self.my_cell)
         else:
-            self.unavailable[element] = time.time() + 60
+            self.unavailable[element] = time.time() + 300      # silent: not harvestable by us (tool / level) or growing back
             got = [f"{t}={b.hex()[:40]}" for ts, t, b in list(self.recent) if ts >= t0 and t not in ("knb", "jnz", None)]
             raise RuntimeError(f"la ressource ne répond depuis aucune des {len(stands)} cases essayées ; reçu : " + (", ".join(got) or "rien"))
         if not self._harvest_end.wait(15): raise RuntimeError("fin de récolte non reçue")
@@ -795,7 +812,15 @@ class Session:
                 if until(): return True
                 if self._mapchanged.is_set(): break
                 time.sleep(0.2)
-            else: return False
+            else:
+                got = [f"{t}={b.hex()[:30]}" for ts, t, b in list(self.recent) if ts >= t0 and t not in ("knb", "jnz", None)]      # what the server answered: tells why the use did not count
+                self.log("info", "  réponses du serveur après l'utilisation : " + (", ".join(got[:8]) or "aucune"))
+                if any(g.startswith("hgq=") or g.startswith("itv=") for g in got):      # an interface opened (zaap...): the quest may count the examination only once it is closed
+                    self._send("kiq"); time.sleep(1.5)
+                    try: self.sync_quests()
+                    except Exception: pass
+                    if until(): return True
+                return False
         if self._mapchanged.wait(4):      # a real door answers within a second (jow)
             time.sleep(1.0)
             new = gamedoors.record(frm, e["skill"], element, e["cell"], self.map_id, known.get("stand") if known else None)
@@ -1110,7 +1135,8 @@ class Session:
         failures = 0
         while self.keep_alive:
             time.sleep(2)
-            if self.status not in ("error", "disconnected") or self.auto.on: continue      # connected, connecting, or the autopilot handles its own drops
+            if self.status not in ("error", "disconnected") or self.auto.on: continue
+            if self.status == "error" and re.search(r"HAAPI 4\d\d|certificat|compte inconnu", str(self.error)): self.log("error", "Authentification refusée : pas de reconnexion automatique"); self.keep_alive = False; break      # connected, connecting, or the autopilot handles its own drops
             self.log("warn", "Connexion perdue : reconnexion automatique")
             try: ok = self.reconnect()
             except Exception as e: self.log("error", f"reconnexion automatique : {type(e).__name__}: {e}"); ok = False
@@ -1155,7 +1181,7 @@ class Session:
         c = None
         try:
             if not accounts.get(self.aid): raise SystemExit("compte inconnu")
-            cert_id, cert_hash = shield.certificate_args()
+            cert_id, cert_hash = shield.certificate_args(self.aid)
             if not cert_hash: raise SystemExit("pas de certificat Shield : lance shield.py request puis shield.py validate <code>")
             self.log("info", "Rafraîchissement de la clé HAAPI"); accounts.refresh(self.aid)
             token = create_game_token(accounts.get(self.aid)["key"], GAME_IDS["dofus"], cert_id, cert_hash)

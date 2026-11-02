@@ -27,6 +27,8 @@ RECONNECT_WINDOW = 1200            # seconds over which the reconnections are co
 MAX_RECONNECTS = 5                  # reconnections after a dropped connection before the autopilot gives up
 MAX_DOOR_PROBES = 10                # unknown doors tried in one search for a resource
 MAX_BORDER_EXPLORES = 25            # maps whose unknown borders are tried in one run
+MAX_SILENT_SPOTS = 3                # resource spots in a row that never answer before the gathering is given up
+REGEN_SECONDS = 2.0                # natural life regeneration out of fight: about 1 HP per 2 s
 MAX_NEW_QUESTS = 3                 # quests the autopilot starts by itself in one run
 GEAR_SETS = [("Piou Bleu", 491, [8244, 8232, 8214, 8220, 8238, 8226])]     # (set name, monster id, [hat, cape, amulet, ring, belt, boots]) farmed once Incarnam is done
 GEAR_SLOTS = {16: (6,), 17: (7,), 1: (0,), 9: (2, 4), 10: (3,), 11: (5,)}     # item type -> equipment positions to try
@@ -220,29 +222,32 @@ class Autopilot:
                 with knowledge._lock: d = knowledge.load("gear_farm.json", {}); d[key] = got; knowledge.save("gear_farm.json", d)
             if self._danger and got == len(pieces):      # fully equipped: the fights left aside are worth another try
                 with knowledge._lock:
-                    d = knowledge.load("dangerous_objectives.json", {})
+                    d = knowledge.load(self._kf("dangerous_objectives.json"), {})
                     for oid in self._danger: d.pop(str(oid), None); self.attempts[oid] = 0
-                    knowledge.save("dangerous_objectives.json", d)
+                    knowledge.save(self._kf("dangerous_objectives.json"), d)
                 self.say("info", f"{len(self._danger)} objectif(s) de combat remis en jeu avec la panoplie"); self._danger.clear()
             return True
         return False
 
     def _rest_hp(self, wanted=0.8, timeout=240):
-        """Do not start the next objective (it may be a fight) with the life low: wait for it to regenerate (it only does so out of combat)."""
-        end = time.time() + timeout; announced = False
+        """Do not start the next objective (it may be a fight) with the life low: wait for it to regenerate (it only does so out of combat).
+        The server does not push the regenerated life (the client computes it, about 1 HP per REGEN_SECONDS), so the wait is estimated from the last value received."""
+        end = time.time() + timeout; announced = False; base = None; t0 = time.time()
         while self._alive() and time.time() < end:
             with self.s._lock: v = self.s._vitals() or {}
             hp, mx = v.get("hp"), v.get("hp_max")
-            if not hp or not mx or hp >= wanted * mx: return
+            if not hp or not mx: return
+            if hp != base: base, t0 = hp, time.time()      # a fresh value from the server: restart the estimate from it
+            if base + (time.time() - t0) / REGEN_SECONDS >= wanted * mx: return
             if not announced: self.say("info", f"vie basse ({hp}/{mx}) : je me repose avant le prochain objectif"); announced = True
-            time.sleep(10)
+            time.sleep(min(10, max(1.0, REGEN_SECONDS)))
 
     def _note_deaths(self, oid, n):
         """Deaths while working on an objective, remembered in knowledge/dangerous_objectives.json: from MAX_OBJECTIVE_DEATHS the objective is left alone
         (the fight is too hard for this character), here and in later runs."""
         if n <= 0: return
         with knowledge._lock:
-            d = knowledge.load("dangerous_objectives.json", {}); cur = _danger_entry(d.get(str(oid))); d[str(oid)] = {"n": cur["n"] + n, "level": self.s.level or 0}; knowledge.save("dangerous_objectives.json", d)
+            d = knowledge.load(self._kf("dangerous_objectives.json"), {}); cur = _danger_entry(d.get(str(oid))); d[str(oid)] = {"n": cur["n"] + n, "level": self.s.level or 0}; knowledge.save(self._kf("dangerous_objectives.json"), d)
         total = d[str(oid)]["n"]
         self.say("warn", f"{total} défaite(s) sur l'objectif « {gamequests.objective_text(oid)} »")
         if total >= MAX_OBJECTIVE_DEATHS: self.attempts[oid] = 99; self._danger.add(oid); self.say("warn", "objectif mis de côté : combat trop dur pour ce personnage")
@@ -268,21 +273,25 @@ class Autopilot:
             try: self.s._act.release()
             except RuntimeError: pass
 
+    def _kf(self, name):
+        """Per-character knowledge file (objectives left aside, defeats...): a new character must not inherit what the previous one learned about itself."""
+        return f"{name[:-5]}_{self.s.char_id}.json" if self.s.char_id else name
+
     # ---- main loop ----
     def _run(self):
         self.say("info", "démarré")
-        for oid, ts in knowledge.load(GATHER_FAILED_FILE, {}).items():
+        for oid, ts in knowledge.load(self._kf(GATHER_FAILED_FILE), {}).items():
             if time.time() - ts < GATHER_RETRY_HOURS * 3600: self.attempts[int(oid)] = 99; self.say("info", f"objectif « {gamequests.objective_text(int(oid))} » laissé de côté (ressource introuvable il y a peu)")
-        for oid, text in knowledge.load(UNVALIDATED_FILE, {}).items(): self.attempts[int(oid)] = 99; self.say("info", f"objectif « {text} » ignoré (jamais validé lors des runs précédents)")
+        for oid, text in knowledge.load(self._kf(UNVALIDATED_FILE), {}).items(): self.attempts[int(oid)] = 99; self.say("info", f"objectif « {text} » ignoré (jamais validé lors des runs précédents)")
         self._danger = set(); lvl = self.s.level or 0
         with knowledge._lock:
-            d = knowledge.load("dangerous_objectives.json", {}); changed = False
+            d = knowledge.load(self._kf("dangerous_objectives.json"), {}); changed = False
             for oid, raw in list(d.items()):
                 e = _danger_entry(raw)
                 if e["level"] and lvl >= e["level"] + DANGER_FORGIVE_LEVELS:      # the character grew since: the fight may be easy now
                     del d[oid]; changed = True; self.say("info", f"objectif « {gamequests.objective_text(int(oid))} » : de nouveau tenté (niveau {lvl}, défaites au niveau {e['level']})"); continue
                 if e["n"] >= MAX_OBJECTIVE_DEATHS: self.attempts[int(oid)] = 99; self._danger.add(int(oid)); self.say("info", f"objectif « {gamequests.objective_text(int(oid))} » ignoré ({e['n']} défaites passées)")
-            if changed: knowledge.save("dangerous_objectives.json", d)
+            if changed: knowledge.save(self._kf("dangerous_objectives.json"), d)
         try:
             drops = collections.deque()      # times of the recent drops: MAX_RECONNECTS counts the ones of the last RECONNECT_WINDOW seconds, a long run survives many isolated drops
             while True:
@@ -860,7 +869,7 @@ class Autopilot:
         o = gamedata.quest_data("objectives", oid) or {}; elem = int((o.get("p") or [0])[0] or 0)
         if elem and elem not in gamemaps.element_positions(target):      # the element the objective names is not on its map: more tries would repeat the same uses
             if self.attempts[oid] < MAX_ATTEMPTS: return True
-            with knowledge._lock: d = knowledge.load(UNVALIDATED_FILE, {}); d[str(oid)] = text; knowledge.save(UNVALIDATED_FILE, d)       # later runs leave it alone at once
+            with knowledge._lock: d = knowledge.load(self._kf(UNVALIDATED_FILE), {}); d[str(oid)] = text; knowledge.save(self._kf(UNVALIDATED_FILE), d)       # later runs leave it alone at once
             self.attempts[oid] = 99; return False
         return self.attempts[oid] < FREE_ATTEMPTS
 
@@ -1086,7 +1095,7 @@ class Autopilot:
                 fights += 1; time.sleep(REST_SECONDS + 3); continue
             cur = self.s.map_id; visited.add(cur); dist = distances(cur); world = self._world(cur)
             cands = [m for m in dist if m not in visited and self._world(m) == world and dist[m] <= 6]
-            if wanted: cands = [m for w in wanted for m in gamedata.monster_maps(w) if m in dist and m not in visited] or cands      # where those monsters live
+            if wanted: cands = [m for w in wanted for m in gamedata.monster_maps(w) if m in dist and m not in visited and self._world(m) == world] or cands      # where those monsters live, in this world (else the nearby maps: the zone's own monster list can lack them; never another world)
             maps += 1
             if not cands or maps > MAX_GATHER_MAPS: self.say("warn", f"plus de carte à visiter pour trouver un groupe à tuer ({name})"); return False
             nxt = min(cands, key=lambda m: dist[m])
@@ -1129,16 +1138,19 @@ class Autopilot:
             if not wanted and self._buy_item(item_id, need, qid): return True      # sold by an NPC the guide names
             return self._hunt(item_id, need, wanted or None)      # a monster drop
         self.say("info", f"récolte : {name} ({self.s.have(item_id)}/{need})"); self.goal = f"récolter {need} {name}"
-        visited = set(); fails = rounds = maps = doors_tried = 0; hinted = set()
+        visited = set(); fails = rounds = maps = doors_tried = 0; hinted = set(); silent = set()
         while self._alive() and self.s.have(item_id) < need:
             self._note_resources(models)
             els = self._resources_here(models)
             if els:
                 for el in els:
                     if not self._alive() or self.s.have(item_id) >= need: break
-                    try: self._act(f"Récolter {name} (élément {el})", lambda: self.s._do_harvest(el)); fails = 0
+                    try: self._act(f"Récolter {name} (élément {el})", lambda: self.s._do_harvest(el)); fails = 0; silent.clear()
                     except RuntimeError as e:
                         fails += 1; self.say("warn", f"récolte impossible : {e}")
+                        if "ne répond depuis" in str(e): silent.add(el)
+                        if len(silent) >= MAX_SILENT_SPOTS:      # several different spots that answer nothing: depletion would not look like that, the tool (a rod...) or the job level is missing
+                            self.say("warn", f"{len(silent)} emplacements de {name} ne répondent pas : outil ou niveau de métier manquant ? je laisse la récolte"); return False
                         if fails >= 6: return False
                 continue
             cur = self.s.map_id; visited.add(cur)
@@ -1159,8 +1171,12 @@ class Autopilot:
                     self.say("event", f"porte trouvée : carte {self.s.map_id}"); self._sleep(2.0); continue
             if not cands:
                 rounds += 1
-                if rounds > 3: self.say("warn", f"plus de carte à visiter pour trouver {name}"); return False
-                self.say("info", f"aucun(e) {name} disponible : j'attends la repousse (30 s)"); visited.clear(); self._sleep(30); continue
+                if rounds > 6: self.say("warn", f"plus de carte à visiter pour trouver {name}"); return False
+                self.say("info", f"aucun(e) {name} disponible : j'attends la repousse (le serveur la signale)"); visited.clear()
+                for _ in range(20):      # up to a minute, ending as soon as one of them is back
+                    if not self._alive() or self._resources_here(models): break
+                    self._sleep(3)
+                continue
             maps += 1
             if maps > MAX_GATHER_MAPS: self.say("warn", "trop de cartes visitées pour trouver la ressource"); return False
             nxt = cands[0] if near else min(cands, key=lambda m: dist[m]); info = gamedata.map_info(nxt)
@@ -1188,7 +1204,7 @@ class Autopilot:
             if not got:
                 if gamejobs.resource_skills(ing) and self._alive():      # a harvested resource nobody found (a mine behind an unknown door): the same search again would fail the same way, the other quests go first
                     self.attempts[oid] = MAX_ATTEMPTS; self.say("warn", f"« {gamejobs.item_name(ing)} » introuvable : objectif laissé de côté pendant {GATHER_RETRY_HOURS} h")
-                    with knowledge._lock: d = knowledge.load(GATHER_FAILED_FILE, {}); d[str(oid)] = time.time(); knowledge.save(GATHER_FAILED_FILE, d)
+                    with knowledge._lock: d = knowledge.load(self._kf(GATHER_FAILED_FILE), {}); d[str(oid)] = time.time(); knowledge.save(self._kf(GATHER_FAILED_FILE), d)
                 return self.attempts[oid] < MAX_ATTEMPTS and self._alive()
         if not self._alive(): return False
         if target and self.s.map_id != target:

@@ -35,19 +35,26 @@ def request_code(key, sms=False):
     return _get("json/Ankama/v5/Shield/SecurityCode", key, transportType="SMS" if sms else "EMAIL")
 
 
-def validate_code(key, code):
+def cert_path(aid=None):
+    """One certificate per account (cert_<id>.json); the first account keeps the old shared cert.json."""
+    own = os.path.join(os.path.dirname(store.PATH), f"cert_{aid}.json") if aid else None
+    return own if own and (os.path.exists(own) or not os.path.exists(CERT_PATH)) else CERT_PATH
+
+
+def validate_code(key, code, aid=None):
     hm1, hm2 = fingerprint()
     _, body = _get("json/Ankama/v5/Shield/ValidateCode", key, game_id=ZAAP_GAME_ID, code=code, hm1=hm1, hm2=hm2, name=DEVICE_NAME)
-    os.makedirs(os.path.dirname(CERT_PATH), exist_ok=True)
-    with open(CERT_PATH, "w", encoding="utf8") as f:
+    path = os.path.join(os.path.dirname(store.PATH), f"cert_{aid}.json") if aid else CERT_PATH
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf8") as f:
         json.dump({"id": body["id"], "encodedCertificate": body["encodedCertificate"]}, f)
     return body["id"]
 
 
-def certificate_args():
+def certificate_args(aid=None):
     """(certificate_id, certificate_hash) for CreateToken, or (None, None) if no certificate is stored."""
     try:
-        with open(CERT_PATH, encoding="utf8") as f: c = json.load(f)
+        with open(cert_path(aid), encoding="utf8") as f: c = json.load(f)
     except (OSError, ValueError): return None, None
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes   # pip install cryptography
     hm1, hm2 = fingerprint()
@@ -58,10 +65,15 @@ def certificate_args():
 
 
 if __name__ == "__main__":
-    s = store.load() or sys.exit("no saved tokens: run connect.py once (browser login)")
-    if sys.argv[1:2] == ["request"]:
-        print("code requested:", request_code(s["key"]))
-    elif sys.argv[1:2] == ["validate"] and len(sys.argv) == 3:
-        print("certificate id:", validate_code(s["key"], sys.argv[2]))
+    def key_of(aid):
+        import accounts
+        a = next((x for x in accounts._read() if x["id"] == aid), None) if aid else None
+        return a["key"] if a else (store.load() or sys.exit("no saved tokens: run connect.py once (browser login)"))["key"]
+    cmd, args = sys.argv[1:2], sys.argv[2:]
+    if cmd == ["request"]:
+        print("code requested:", request_code(key_of(args[0] if args else None)))
+    elif cmd == ["validate"] and args:
+        aid = args[1] if len(args) > 1 else None
+        print("certificate id:", validate_code(key_of(aid), args[0], aid))
     else:
-        sys.exit(__doc__)
+        sys.exit(__doc__ + "  optional last argument: account id (one certificate per account), e.g. validate 123456 23cdec9a")
