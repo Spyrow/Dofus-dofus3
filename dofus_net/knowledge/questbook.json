@@ -186,6 +186,19 @@
   }
  },
  "quests": {
+  "1631": {
+   "name": "Réponses à tout",
+   "seen": 271,
+   "steps": {
+    "2251": {
+     "name": "Réponses à tout",
+     "objectives": {
+      "9738": "En savoir plus sur votre objectif : les Dofus Primordiaux",
+      "9739": "En savoir plus sur votre destination"
+     }
+    }
+   }
+  },
   "1632": {
    "name": "Le village dans les nuages",
    "seen": 126,
@@ -206,7 +219,7 @@
   },
   "1633": {
    "name": "Mort au rat !",
-   "seen": 30,
+   "seen": 285,
    "steps": {
     "2253": {
      "name": "Mort au rat !",
@@ -238,7 +251,7 @@
   },
   "1635": {
    "name": "Dans la gueule du Milimilou",
-   "seen": 534,
+   "seen": 615,
    "steps": {
     "2255": {
      "name": "Dans la gueule du Milimilou",
@@ -254,7 +267,7 @@
   },
   "1637": {
    "name": "La galette secrète",
-   "seen": 87,
+   "seen": 398,
    "steps": {
     "2257": {
      "name": "La galette secrète",
@@ -316,7 +329,7 @@
   },
   "1641": {
    "name": "Vu du ciel",
-   "seen": 188,
+   "seen": 225,
    "steps": {
     "2261": {
      "name": "Vu du ciel",
@@ -332,7 +345,7 @@
   },
   "1642": {
    "name": "Mise à l'épreuve",
-   "seen": 80,
+   "seen": 116,
    "steps": {
     "2262": {
      "name": "Mise à l'épreuve",
@@ -347,7 +360,7 @@
   },
   "1643": {
    "name": "Champs de bataille",
-   "seen": 28,
+   "seen": 38,
    "steps": {
     "2263": {
      "name": "Champs de bataille",
@@ -363,7 +376,7 @@
   },
   "1644": {
    "name": "Coups d'épée dans l'eau",
-   "seen": 47,
+   "seen": 57,
    "steps": {
     "2264": {
      "name": "Coups d'épée dans l'eau",
@@ -378,7 +391,7 @@
   },
   "1645": {
    "name": "Décime-moi des bouftous",
-   "seen": 56,
+   "seen": 291,
    "steps": {
     "2265": {
      "name": "Décime-moi des bouftous",
@@ -394,7 +407,7 @@
   },
   "1646": {
    "name": "Chasse aux chapardams",
-   "seen": 18,
+   "seen": 38,
    "steps": {
     "2266": {
      "name": "Chasse aux chapardams",
@@ -441,7 +454,7 @@
   },
   "1649": {
    "name": "Produits naturels",
-   "seen": 371,
+   "seen": 721,
    "steps": {
     "2269": {
      "name": "Produits naturels",
@@ -496,7 +509,7 @@
   },
   "1655": {
    "name": "Un peu de pigment",
-   "seen": 10,
+   "seen": 268,
    "steps": {
     "2275": {
      "name": "Un peu de pigment",
@@ -508,7 +521,7 @@
   },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 556,
+   "seen": 559,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",
@@ -522,7 +535,7 @@
   },
   "1959": {
    "name": "On marche sur des œufs",
-   "seen": 123,
+   "seen": 296,
    "steps": {
     "2629": {
      "name": "On marche sur des œufs",
@@ -566,7 +579,7 @@
   },
   "1975": {
    "name": "Ça tombe à l'eau",
-   "seen": 324,
+   "seen": 481,
    "steps": {
     "2635": {
      "name": "Ça tombe à l'eau",
@@ -664,7 +677,7 @@
   },
   "1992": {
    "name": "Chacha Blues",
-   "seen": 118,
+   "seen": 259,
    "steps": {
     "2653": {
      "name": "Chacha Blues",
@@ -743,9 +756,21 @@
     }
    }
   },
+  "2545": {
+   "name": "Premiers pas",
+   "seen": 1,
+   "steps": {
+    "3226": {
+     "name": "Se déplacer",
+     "objectives": {
+      "19534": "Déplacer votre personnage sur la cellule en surbrillance"
+     }
+    }
+   }
+  },
   "826": {
    "name": "La fin du règne",
-   "seen": 55,
+   "seen": 89,
    "steps": {
     "1449": {
      "name": "La fin du règne",
@@ -858,19 +883,19 @@
    "qid": 1642
   },
   "9832": {
-   "count": 1,
+   "count": 3,
    "kind": "fight",
-   "last": 1793529538,
-   "map": 153878788,
+   "last": 1793628685,
+   "map": 153878789,
    "monsters": [
     970
    ],
    "qid": 1643
   },
   "9833": {
-   "count": 1,
+   "count": 3,
    "kind": "fight",
-   "last": 1793529510,
+   "last": 1793628598,
    "map": 153878788,
    "monsters": [
     979
@@ -878,9 +903,9 @@
    "qid": 1643
   },
   "9834": {
-   "count": 1,
+   "count": 3,
    "kind": "fight",
-   "last": 1793529579,
+   "last": 1793628631,
    "map": 153878788,
    "monsters": [
     980
@@ -888,60 +913,61 @@
    "qid": 1643
   },
   "9835": {
-   "count": 1,
+   "count": 3,
    "kind": "fight",
-   "last": 1793529481,
-   "map": 153878788,
+   "last": 1793628730,
+   "map": 153878789,
    "monsters": [
     981
    ],
    "qid": 1643
   },
   "9837": {
-   "count": 2,
+   "count": 4,
    "kind": "fight",
-   "last": 1793531196,
-   "map": 153878785,
+   "last": 1793628870,
+   "map": 153878786,
    "monsters": [
     4109
    ],
    "qid": 1644
   },
   "9838": {
-   "count": 2,
+   "count": 4,
    "kind": "fight",
-   "last": 1793531263,
-   "map": 153878785,
+   "last": 1793628954,
+   "map": 153878786,
    "monsters": [
-    4108
-   ],
-   "qid": 1644
-  },
-  "9839": {
-   "count": 2,
-   "kind": "fight",
-   "last": 1793531229,
-   "map": 153878785,
-   "monsters": [
+    4108,
     4109,
     4110
    ],
    "qid": 1644
   },
-  "9841": {
-   "count": 2,
+  "9839": {
+   "count": 4,
    "kind": "fight",
-   "last": 1793534863,
-   "map": 153880836,
+   "last": 1793628912,
+   "map": 153878786,
+   "monsters": [
+    4110
+   ],
+   "qid": 1644
+  },
+  "9841": {
+   "count": 3,
+   "kind": "fight",
+   "last": 1793642552,
+   "map": 153880324,
    "monsters": [
     972
    ],
    "qid": 1645
   },
   "9842": {
-   "count": 2,
+   "count": 4,
    "kind": "fight",
-   "last": 1793538007,
+   "last": 1793629019,
    "map": 153879300,
    "monsters": [
     973
@@ -949,21 +975,20 @@
    "qid": 1645
   },
   "9843": {
-   "count": 2,
+   "count": 4,
    "kind": "fight",
-   "last": 1793534929,
-   "map": 153880836,
+   "last": 1793629142,
+   "map": 153879300,
    "monsters": [
-    971,
-    984
+    971
    ],
    "qid": 1645
   },
   "9844": {
-   "count": 2,
+   "count": 4,
    "kind": "fight",
-   "last": 1793534888,
-   "map": 153880836,
+   "last": 1793629259,
+   "map": 153879812,
    "monsters": [
     984
    ],

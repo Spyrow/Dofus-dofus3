@@ -780,13 +780,11 @@
    "stand": 321
   },
   {
-   "kind": "step",
-   "guess": true,
-   "element": null,
-   "skill": null,
-   "cell": 283,
+   "skill": 16469,
+   "element": 514727,
+   "cell": null,
    "to": 192416770,
-   "stand": null
+   "stand": 283
   }
  ],
  "191106050": [
@@ -1302,6 +1300,16 @@
    "cell": null,
    "to": 192677888,
    "stand": 261
+  }
+ ],
+ "241437185": [
+  {
+   "kind": "step",
+   "element": null,
+   "skill": null,
+   "cell": 383,
+   "to": 241443329,
+   "stand": null
   }
  ]
 }

@@ -147,6 +147,7 @@ class H(BaseHTTPRequestHandler):
             if not accounts.get(m[1]): return self._json({"error": "not found"}, 404)
             sess = gamesession.session(m[1])
             if m[2] == "connect":
+                if body.get("create"): sess.create_cfg = dict(gamesession.login.DEFAULT_CREATE, **{k: v for k, v in (body.get("create") if isinstance(body.get("create"), dict) else {}).items() if k in gamesession.login.DEFAULT_CREATE and k != "colors"})      # {"create": true} or {"create": {"breed": 3, "sex": 0}}: make a character if the account has none
                 if not sess.connect(): return self._json({"error": "session déjà active"}, 409)
             else: sess.stop()
             self._json(sess.view(sess.seq), 202)

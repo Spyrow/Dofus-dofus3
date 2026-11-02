@@ -75,7 +75,8 @@ class Fight:
         self.started, self.over, self.my_turn, self.cast_evt = (threading.Event() for _ in range(4))
         self.jvj_me = False; self.dead = set(); self.casts = {}
         self.tpl, self.hp, self.pm, self.mutilated = {}, {}, {}, False      # fighter -> monster template / life / MP; Mutilation already cast this fight
-        self.last_message_at = 0.0
+        self.last_message_at = 0.0; self.ap_err = None      # ap_err: (AP I have, AP the spell needs, time) from the server's "not enough AP" answer
+        if not hasattr(self, "cost"): self.cost = {}      # spell id -> the AP cost the server really asked (the data holds the first grade's), kept across fights
         if not hasattr(self, "spell_score"): self.spell_score = {}   # spell id -> [reactions, silences], kept across fights
 
     # ---- messages (called from the session's receive loop) ----
@@ -98,6 +99,9 @@ class Fight:
             sid = _vi(body, 2)
             if s64(_vi(body, 4)) == s.char_id and sid in ACK_IDS:
                 self._later(1.0 if _vi(body, 3) is None else 0.4, login.JST, f_varint(2, sid) + f_varint(3, 1))
+        elif t == "lof" and _vi(body, 2) == 170:      # lof {2: 170, 4: have, 4: need}: the cast was refused for lack of action points
+            args = [v.decode(errors="replace") for f, v in parse(body) if f == 4 and isinstance(v, bytes)]
+            if len(args) >= 2 and args[0].isdigit() and args[1].isdigit(): self.ap_err = (min(int(args[0]), int(args[1])), max(int(args[0]), int(args[1])), time.monotonic())      # the need is the bigger of the two
         elif t == login.JTK: self.cast_evt.set()
         elif t == login.JSQ:   # jsq {22: action id, 3: {2: victim}} -- action 103 is a death (seen when the last cast killed the monster)
             self.cast_evt.set()
@@ -185,7 +189,7 @@ class Fight:
         for sid in self.s.spell_ids:
             sp = gamedata.get("spells", sid); lv = [gamedata.get("spell_levels", i) for i in (sp or {}).get("levels", [])]
             lv = min((x for x in lv if x), key=lambda x: x["grade"], default=None)
-            if lv: out.append({"id": sid, "name": sp["name"], "ap": lv["ap"], "min": lv["min_range"], "max": lv["range"], "per_turn": lv["max_per_turn"]})
+            if lv: out.append({"id": sid, "name": sp["name"], "ap": self.cost.get(sid, lv["ap"]), "min": lv["min_range"], "max": lv["range"], "per_turn": lv["max_per_turn"]})
         return out
 
     # ---- boss tactic (a big group: Kardorim and his chafers) ----
@@ -241,6 +245,19 @@ class Fight:
             got = sorted({str(t) for ts, t, _b in s.recent if ts >= t0 and t not in ("knb", None)})
             raise RuntimeError(f"déplacement refusé (le serveur a répondu : {', '.join(got) or 'rien'})")
         time.sleep(gamemaps.STEP_SECONDS * (len(path) - 1) + 0.6)
+
+    def _wait_cast(self, sp):
+        """Wait for the reaction to a cast just sent. -> (reacted, ap left or None): the server's \"not enough AP\" answer ends the wait at once and
+        tells the real balance, which also corrects the cost the data gave for that spell."""
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 3:
+            if self.cast_evt.is_set(): return True, None
+            e = self.ap_err
+            if e and e[2] >= t0 - 0.05:
+                self.cost[sp["id"]] = max(e[1], sp["ap"]); sp["ap"] = self.cost[sp["id"]]
+                return False, e[0]
+            time.sleep(0.05)
+        return self.cast_evt.is_set(), None
 
     def _cast(self, sp, cell, say, note=""):
         import login
@@ -312,7 +329,9 @@ class Fight:
             if target:
                 tid, sp = target; tcell = enemies[tid]; self.cast_evt.clear()
                 s._send(login.JSR, f_varint(1, sp["id"]) + f_varint(2, tcell)); say(f"{sp['name']} sur la case {tcell}")
-                if not self.cast_evt.wait(3):
+                ok, ap_left = self._wait_cast(sp)
+                if ap_left is not None: ap = ap_left; say(f"pas assez de PA pour « {sp['name']} » : il m'en reste {ap}"); continue
+                if not ok:
                     skipped.add((tid, sp["id"])); self._score(sp["id"], False)
                     say(f"pas de réaction de {tid} à « {sp['name']} » ce tour-ci : ce sort est écarté pour cette cible jusqu'à la fin du tour"); continue
                 self._score(sp["id"], True)
@@ -341,7 +360,9 @@ class Fight:
             if blind:
                 tid, sp = blind; self.cast_evt.clear()
                 s._send(login.JSR, f_varint(1, sp["id"]) + f_varint(2, enemies[tid])); say(f"{sp['name']} sur la case {enemies[tid]} (sans ligne de vue estimée)")
-                if not self.cast_evt.wait(3): skipped.add((tid, sp["id"])); self._score(sp["id"], False); continue
+                ok, ap_left = self._wait_cast(sp)
+                if ap_left is not None: ap = ap_left; continue
+                if not ok: skipped.add((tid, sp["id"])); self._score(sp["id"], False); continue
                 self._score(sp["id"], True)
                 ap -= sp["ap"]; casts[sp["id"]] = casts.get(sp["id"], 0) + 1; time.sleep(1.3); continue
             return

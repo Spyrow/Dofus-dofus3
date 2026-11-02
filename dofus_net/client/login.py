@@ -33,6 +33,23 @@ HOST, PORT = "dofus2-co-production.ankama-games.com", 5555
 CLIENT_VERSION = "3.7.12.12"
 SERVER_ID = 291     # id sent in the 'select server' request in the capture (ticket host: dofus2-ga-imagiro)
 
+KTB, KSP, KRU, KSL, KSN = "ktb", "ksp", "kru", "ksl", "ksn"   # random name request / the name offered / create the character / select it after the creation / name refused
+# what the capture of a creation sent: breed 11, a sex, a head, the colours (packed varints) -- override with GameSession.create_cfg
+DEFAULT_CREATE = {"breed": 11, "sex": 1, "head": 173, "f7": 27, "colors": bytes.fromhex("8e80b902fadfe206a8b89305ede69205a6a5cb07aab08d02")}
+
+def _characters(body):
+    """ksc body -> [(character id, name)]"""
+    out = []
+    for f, v in parse(body):
+        if f == 2 and isinstance(v, bytes):
+            cid = _field_varint(v, 3); sub = _field(v, 4)
+            name = _field(sub, 6) if isinstance(sub, bytes) else None
+            out.append((cid, name.decode("utf-8", "replace") if isinstance(name, bytes) else name))
+    return out
+
+def _kru(name, cfg):
+    return request(KRU, f_bytes(1, f_bytes(2, name) + f_varint(3, cfg["sex"]) + f_varint(4, cfg["breed"]) + f_varint(5, cfg["head"]) + f_varint(7, cfg["f7"]) + f_bytes(8, cfg["colors"])))
+
 def _field(body, num):
     return next((v for f, v in parse(body) if f == num), None)
 
@@ -51,7 +68,7 @@ def connection_step(token, device_hash, server_id=SERVER_ID):
     return ticket, host
 
 def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, enter_map=False, max_seconds=None,
-              stop=None, heartbeat=0, on_message=None, log=None, on_ready=None):
+              stop=None, heartbeat=0, on_message=None, log=None, on_ready=None, create=None):
     """Handshake (+ character selection if enter). collect: list that receives every (type, body) the server pushes;
     on_message(type, body) is called for each one. enter_map: after the selection burst, send the client's READY requests
     so the server also pushes the current map (jow). heartbeat: send the client's keep-alive (kne) every N seconds.
@@ -64,7 +81,7 @@ def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, ent
     c = GameConn(host, PORT); c.s.settimeout(1.0)
     if on_ready: on_ready(c)
     c.send(request(KNC, f_bytes(1, ticket) + f_bytes(2, "fr"))); log("action", "→ knc (ticket)")
-    char_id = None; sent_kod = False; first_jow = True; pending_jow = None; saw_jvl = False; in_fight_login = False
+    char_id = None; sent_kod = False; first_jow = True; pending_jow = None; saw_jvl = False; in_fight_login = False; creating = None; name_tries = 0; created_name = None
     while True:
         now = time.time()
         if pending_jow and now - pending_jow[1] >= 1.2:      # capture of a reconnection inside a fight: the client waits ~1.9 s, then igk + kjt (no jpe) and the server pushes the fight state
@@ -96,15 +113,28 @@ def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, ent
             elif mid: c.send(request(KJT, f_varint(1, mid))); c.send(request(JPE, f_varint(1, mid))); log("action", f"→ carte {mid} chargée (kjt + jpe)")
         if t == JVL and pending_jow: saw_jvl = True
         if t == MEQ: c.send(request(KSJ)); log("action", "→ ksj")
+        elif t == KSP and creating == "name":      # {1: random name}
+            created_name = _field(body, 1); created_name = created_name.decode() if isinstance(created_name, bytes) else created_name
+            c.send(_kru(created_name, create)); creating = "sent"; create["done"] = True; log("action", f"→ kru (création du personnage « {created_name} »)")
+        elif t == KSN and creating == "sent" and body:      # name refused (a bodyless ksn is just part of the success burst): ask for another one
+            name_tries += 1
+            if name_tries > 5: log("error", "création du personnage : nom refusé 5 fois"); break
+            creating = "name"; c.send(request(KTB)); log("warn", "nom refusé : nouveau nom aléatoire")
         elif t == "ksk": in_fight_login = True    # the server announces a character still held in a fight
         elif t == KSC:   # {2: {3: character id, ...}}
             sub = _field(body, 2)
             if sub is not None: char_id = _field_varint(sub, 3)
+            chars = _characters(body)
+            if create is not None and not create.get("done") and creating is None:     # a character was asked for: create it like the client (random name, then kru)
+                creating = "name"; c.send(request(KTB)); log("action", "→ ktb (nom aléatoire pour le nouveau personnage)")
+            elif creating == "sent" and chars:      # the creation worked: the client then selects the new character with ksl
+                cid = next((i for i, n in chars if n == created_name), chars[0][0]); char_id = cid; creating = "done"
+                c.send(request(KSL, f_varint(1, cid) + f_varint(3, 1))); log("action", f"→ ksl (sélection du personnage créé {cid})")
             if in_fight_login and enter:   # the real client resumes with a bare ksu, not kta
                 c.send(request("ksu")); log("action", "→ ksu (reprise du personnage en combat)")
         elif t == JPX and not sent_kod:
             kod, _a = make_kod(); c.send(request(KOD, f_bytes(1, kod), req_id=2)); sent_kod = True; log("action", "→ kod (échange DH)")
-            if enter and char_id and not in_fight_login: c.send(request(KTA, f_varint(1, char_id))); log("action", f"→ kta (sélection du personnage {char_id})")
+            if enter and char_id and not in_fight_login and not (create is not None and not create.get("done")): c.send(request(KTA, f_varint(1, char_id))); log("action", f"→ kta (sélection du personnage {char_id})")
     return c
 
 def _field_varint(body, num):

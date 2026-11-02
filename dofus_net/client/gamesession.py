@@ -32,6 +32,7 @@ def _vi(body, num):
 class Session:
     def __init__(self, aid):
         self.aid = aid
+        self.create_cfg = None      # set to login.DEFAULT_CREATE (or a variant): the next connection creates a character first (once)
         self.status, self.error, self.since = "disconnected", None, None
         self.seq = 0
         self.journal = collections.deque(maxlen=800)
@@ -316,11 +317,13 @@ class Session:
         x, y = gamemaps.to_xy(cell)
         ring = [gamemaps.from_xy(x + dx, y + dy) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1))]      # direct neighbours, then the diagonals
         stands = []
+        with self._lock: occupied = {v.get("cell") for k, v in self.elements.items() if k != element and v.get("cell") is not None}
+        occupied |= {int(c) for k, c in knowledge.load("element_cells.json", {}).get(str(mid), {}).items() if int(k) != element and isinstance(c, int)}      # another resource stands there: the server refuses to put us on it, and then ignores the harvest
         for i, c in enumerate(ring):
-            if c is None: continue
+            if c is None or c in occupied: continue
             path, _ = self.plan(c)
             if path: stands.append((i >= 4, len(path), c))
-        stands = [c for _d, _l, c in sorted(stands)][:5 if known else 6]
+        stands = [c for _d, _l, c in sorted(stands)][:2 if known else 4]      # a resource that does not answer from two cells will not from five: fewer tries, less spam
         if not stands: raise RuntimeError("aucune case accessible à côté de l'élément")
         name = gamedata.get("interactives", e.get("interactive")) or "?"; t0 = time.time()
         for n, stand in enumerate(stands):
@@ -335,7 +338,14 @@ class Session:
         else:
             self.unavailable[element] = time.time() + 300      # silent: not harvestable by us (tool / level) or growing back
             got = [f"{t}={b.hex()[:40]}" for ts, t, b in list(self.recent) if ts >= t0 and t not in ("knb", "jnz", None)]
-            raise RuntimeError(f"la ressource ne répond depuis aucune des {len(stands)} cases essayées ; reçu : " + (", ".join(got) or "rien"))
+            def about(t, b):      # itw {1: {3: element, 4: cell, 5: state}} / itx {1: {..., 6: element}}: which element the answer talks about
+                sub = gamejobs._sub(b, 1)
+                return gamejobs._int(sub, 3) if t == gamejobs.ITW else gamejobs._int(sub, 6)
+            got = []
+            for ts, t, b in list(self.recent):
+                if ts >= t0 and t in (gamejobs.ITW, gamejobs.ITX if hasattr(gamejobs, "ITX") else "itx"): got.append(f"{t}(élément {about(t, b)})")
+            self.log("warn", f"récolte muette : élément {element} compétence {e['skill']} type {e.get('type')} cellule {cell} ; réponses : " + (", ".join(got[:6]) or "aucune"))
+            raise RuntimeError(f"la ressource ne répond depuis aucune des {len(stands)} cases essayées")
         if not self._harvest_end.wait(15): raise RuntimeError("fin de récolte non reçue")
         time.sleep(0.8)   # the loot (isz / irx) and the experience (ipz) arrive right after itt
 
@@ -1240,7 +1250,7 @@ class Session:
 
             c = login.game_step(ticket, host, enter=True, idle=None, quiet=True, enter_map=True, stop=self._stop,
                                 heartbeat=HEARTBEAT, on_message=on_message, log=self.log,
-                                on_ready=lambda cn: setattr(self, "conn", cn))
+                                on_ready=lambda cn: setattr(self, "conn", cn), create=self.create_cfg)
             flush(force=True)
             if self.status == "connecting": raise SystemExit("le serveur n'a envoyé aucune donnée de personnage")
             self.set_status("disconnected")

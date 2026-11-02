@@ -7,7 +7,7 @@ It also stops when a fight starts, when the character disconnects, after MAX_ATT
 
 Travel uses %APPDATA%/dofus_net/mapgraph.json (tools/index_maps.py): {map id: [top, bottom, left, right] neighbour ids}."""
 import collections, json, os, re, threading, time, unicodedata
-import dpln, gamedata, gamedoors, gamejobs, gamemaps, gamequests, guide, knowledge, questbook, store
+import dpln, gamedata, gamedoors, gamejobs, gamemaps, gamequests, guide, knowledge, questbook, store, tutorial
 
 GRAPH_PATH = os.path.join(os.path.dirname(store.PATH), "mapgraph.json")
 SIDES = ("top", "bottom", "left", "right")
@@ -33,6 +33,7 @@ MAX_NEW_QUESTS = 3                 # quests the autopilot starts by itself in on
 GEAR_SETS = [("Piou Bleu", 491, [8244, 8232, 8214, 8220, 8238, 8226])]     # (set name, monster id, [hat, cape, amulet, ring, belt, boots]) farmed once Incarnam is done
 GEAR_SLOTS = {16: (6,), 17: (7,), 1: (0,), 9: (2, 4), 10: (3,), 11: (5,)}     # item type -> equipment positions to try
 MAX_GEAR_FIGHTS = 80
+QUEST_MAX_GROUP = 8                 # quest fights and hunts take any group on the map (the defeats are tracked per objective); the gear farm stays picky
 GEAR_MAX_GROUP = 2                  # biggest group attacked for the set: three monsters killed the level 8 character
 MAX_OBJECTIVE_DEATHS = 2          # deaths on one objective before it is left alone
 DANGER_FORGIVE_LEVELS = 3          # levels gained since the last defeat on an objective before it is tried again
@@ -105,7 +106,7 @@ def _route(start, goal, dead):
         edges += [(int(d["to"]), ("door", d)) for d in doors.get(cur, ()) if d.get("to")]
         edges += border_edges(cur)
         for nxt, step in edges:
-            if nxt in prev: continue
+            if nxt in prev or nxt in tutorial.MAPS: continue      # the tutorial maps are closed behind a new character
             prev[nxt] = (cur, step)
             if nxt == goal:
                 out = []
@@ -129,7 +130,7 @@ def _distances(start, dead):
         nxts = [n for side, n in zip(SIDES, g.get(cur, ())) if n and side not in dead.get(str(cur), ())] + [int(d["to"]) for d in doors.get(cur, ()) if d.get("to")]
         nxts += [to for to, _s in border_edges(cur)]
         for n in nxts:
-            if n not in dist: dist[n] = dist[cur] + 1; queue.append(n)
+            if n not in dist and n not in tutorial.MAPS: dist[n] = dist[cur] + 1; queue.append(n)
     return dist
 
 
@@ -149,7 +150,7 @@ class DesyncError(RuntimeError):
 class Autopilot:
     def __init__(self, sess):
         self.s = sess; self.explore = 0; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.quest_id = None; self.kinds = {"talk", "fight", "craft"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False; self.fight_played = False; self._stuck = []; self._hinted = set()
-        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}; self._start_tried = set(); self._new_quests = 0; self._prefer_words = set(); self._explored = set(); self._gear_skip = set(); self._incarnam_ids = None; self._escorts = set(); self._steps_taken = collections.deque(maxlen=40); self._danger = set(); self._worlds_tried = set()
+        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}; self._start_tried = set(); self._new_quests = 0; self._prefer_words = set(); self._explored = set(); self._gear_skip = set(); self._incarnam_ids = None; self._escorts = set(); self._steps_taken = collections.deque(maxlen=40); self._danger = set(); self._worlds_tried = set(); self._incarnam_retried = False
 
     # ---- control ----
     def start(self, kinds=None, llm=False, quest_id=None):
@@ -165,7 +166,7 @@ class Autopilot:
         self.quest_id = quest_id
         self.kinds = set(kinds or ("talk", "fight", "craft")); self.llm = bool(llm) and guide.available(); self.llm_steps = 0; self._hinted = set()
         self.s.resume_auto = (kinds, llm, quest_id)
-        self.on = True; self.goal = None; self._stop = threading.Event(); self.attempts.clear(); self._start_tried = set(); self._new_quests = 0; self._worlds_tried = set(); self._explored = set(); self._escorts = set(); self._deaths0 = getattr(self.s, "deaths", 0)
+        self.on = True; self.goal = None; self._stop = threading.Event(); self.attempts.clear(); self._start_tried = set(); self._new_quests = 0; self._worlds_tried = set(); self._incarnam_retried = False; self._explored = set(); self._escorts = set(); self._deaths0 = getattr(self.s, "deaths", 0)
         self._thread = threading.Thread(target=self._run, daemon=True); self._thread.start()
         return True
 
@@ -187,7 +188,8 @@ class Autopilot:
             import questreport
             if self._incarnam_ids is None: self._incarnam_ids = set(questreport.area_quests("Incarnam"))
             with self.s._lock: act = set(self.s.quests)
-            if act & self._incarnam_ids and not self._danger: return False       # the Incarnam quests first, unless a quest fight was left aside as too hard: the set comes first then
+            if act & self._incarnam_ids:       # every Incarnam quest first; the only exception: what is left is a fight left aside as too hard and nothing else can be done, the set comes first then
+                if not self._danger or self._pick()[0] is not None: return False
             self._gear_skip.add(key)      # one attempt per run: when it ends early the Astrub quests go on
             have = lambda g: self.s.have(g) > 0 or g in self.s.equipped
             def wear():      # wear what dropped (after every fight: the pieces help in the next ones)
@@ -305,10 +307,11 @@ class Autopilot:
                             try: self._act("Reprise du combat", self.s._do_resume_fight)
                             except RuntimeError as e: self.say("warn", f"combat impossible : {e}"); raise DesyncError("combat fantôme retenu par le serveur")      # the server holds the fight for minutes: reconnect (with long pauses) instead of stopping
                             time.sleep(REST_SECONDS); continue
+                        if self.s.map_id in tutorial.MAPS and tutorial.step(self): continue      # a new character starts in the tutorial
                         if self.s.dialog: self._dialog(); continue
                         if self._dungeon_step(): continue
+                        if self.quest_id is None and self._start_new_quests(incarnam_only=True): continue      # the Incarnam quests not begun yet come before anything else, the set included
                         if self._gear_farm(): continue
-                        if self.quest_id is None and self._start_new_quests(incarnam_only=True): continue      # the Incarnam quests not begun yet come before anything else
                         obj, why = self._pick()
                         if obj is None: obj, why2 = self._pick(any_world=True); why = why if obj is None else why2       # nothing left here: the other world (back through the portal)
                         if obj is None and time.time() - self._last_sync > 20:   # the server does not push the next step by itself: ask for the fresh state, once in a while
@@ -397,6 +400,7 @@ class Autopilot:
                 kind = "talk" if o.get("type") in TALK_TYPES | USE_TYPES | {DISCOVER_TYPE} else "fight" if o.get("type") in FIGHT_TYPES else "craft" if o.get("type") == CRAFT_TYPE else None
                 if kind and kind not in self.kinds: continue
                 text = gamequests.objective_text(oid)
+                if o.get("map") and int(o["map"]) in tutorial.MAPS and self.s.map_id not in tutorial.MAPS: continue      # the tutorial maps are closed behind us: the server finishes those quests
                 if o.get("type") == 0 and re.match(r"\s*r[ée]gler le probl[èe]me", text or "", re.I): continue      # umbrella objective: done by the sub-quests it started
                 if o.get("map") and here and not any_world and self._world(int(o["map"])) not in (None, here): continue      # another zone: not our business now
                 if o.get("type") in TALK_TYPES | USE_TYPES:
@@ -592,12 +596,12 @@ class Autopilot:
 
     def _best_group(self, wanted, max_size=None):
         """Group of the current map covering the most wanted monsters (then the smallest, then the nearest), or None."""
-        from fightbot import MAX_GROUP, dist as cell_dist
+        from fightbot import dist as cell_dist
         with self.s._lock: groups = {a: list(ms) for a, ms in self.s.groups.items()}; actors = dict(self.s.actors); me = self.s.my_cell
         best = None
         for a, ms in groups.items():
             score = len(set(ms) & wanted)
-            if not score or len(ms) > (max_size or MAX_GROUP): continue
+            if not score or len(ms) > (max_size or QUEST_MAX_GROUP): continue
             key = (len(ms), -score, cell_dist(me, actors[a]) if me is not None and a in actors else 99)   # smallest group first: fewer enemies, fewer defeats
             if best is None or key < best[0]: best = (key, a)
         return best[1] if best else None
@@ -730,9 +734,28 @@ class Autopilot:
             self.say("event", f"nouvelle carte : {self.s.map_id}"); self._sleep(2.0); return True
         return False
 
+    def _retry_incarnam(self):
+        """Before leaving the starting zone: Incarnam quests still open get one more round -- the objectives given up on earlier (a resource that was
+        not back yet, a group that was not there) are tried again, except the ones the bot learned are dangerous or never validated. -> True if any."""
+        import questreport
+        self._incarnam_retried = True
+        if self._incarnam_ids is None: self._incarnam_ids = set(questreport.area_quests("Incarnam"))
+        with self.s._lock: quests = {q: dict(objs) for q, (_st, objs) in self.s.quests.items() if q in self._incarnam_ids}
+        never = {int(k) for k in knowledge.load(self._kf(UNVALIDATED_FILE), {})}
+        redo = [oid for objs in quests.values() for oid, active in objs.items() if active and self.attempts[oid] >= MAX_ATTEMPTS and oid not in self._danger and oid not in never]
+        if not redo: return False
+        for oid in redo: self.attempts[oid] = 0
+        with knowledge._lock:
+            d = knowledge.load(self._kf(GATHER_FAILED_FILE), {})
+            for oid in redo: d.pop(str(oid), None)
+            knowledge.save(self._kf(GATHER_FAILED_FILE), d)
+        self.say("info", f"quêtes d'Incarnam encore ouvertes : je retente {len(redo)} objectif(s) abandonné(s) avant de partir")
+        return True
+
     def _next_world(self):
         """Nothing left to do in this world: take a known portal to another world (once per run and portal) so that its quests can be started. -> True if the character arrived."""
         here = self._world(self.s.map_id) if self.s.map_id else None
+        if not self._incarnam_retried and self._retry_incarnam(): return True
         for p in knowledge.load("portals.json", []):
             if p.get("from") != here or (here, p.get("to")) in self._worlds_tried: continue
             self._worlds_tried.add((here, p["to"])); self.say("info", f"plus rien à faire ici : je passe dans le monde « {p['to']} »")
@@ -1022,9 +1045,9 @@ class Autopilot:
 
     def _easiest_group(self):
         """Smallest monster group of the current map that the fight AI can take (MAX_GROUP), nearest first."""
-        from fightbot import MAX_GROUP, dist as cell_dist
+        from fightbot import dist as cell_dist
         with self.s._lock: groups = {a: list(ms) for a, ms in self.s.groups.items()}; actors = dict(self.s.actors); me = self.s.my_cell
-        ok = [a for a, ms in groups.items() if 0 < len(ms) <= MAX_GROUP]
+        ok = [a for a, ms in groups.items() if 0 < len(ms) <= QUEST_MAX_GROUP]
         if not ok: return None
         return min(ok, key=lambda a: (len(groups[a]), cell_dist(me, actors[a]) if me is not None and a in actors else 99))
 
@@ -1149,18 +1172,20 @@ class Autopilot:
             if not wanted and self._buy_item(item_id, need, qid): return True      # sold by an NPC the guide names
             return self._hunt(item_id, need, wanted or None)      # a monster drop
         self.say("info", f"récolte : {name} ({self.s.have(item_id)}/{need})"); self.goal = f"récolter {need} {name}"
-        visited = set(); fails = rounds = maps = doors_tried = 0; hinted = set(); silent = set()
+        visited = set(); fails = rounds = maps = doors_tried = 0; hinted = set(); silent = set(); unreachable = set(); harvested = 0      # unreachable: spots with no walkable cell next to them (a wrong cell estimate), forgotten for this search
         while self._alive() and self.s.have(item_id) < need:
             self._note_resources(models)
-            els = self._resources_here(models)
+            els = [el for el in self._resources_here(models) if (self.s.map_id, el) not in unreachable]
             if els:
                 for el in els:
                     if not self._alive() or self.s.have(item_id) >= need: break
-                    try: self._act(f"Récolter {name} (élément {el})", lambda: self.s._do_harvest(el)); fails = 0; silent.clear()
+                    try: self._act(f"Récolter {name} (élément {el})", lambda: self.s._do_harvest(el)); fails = 0; silent.clear(); harvested += 1
                     except RuntimeError as e:
-                        fails += 1; self.say("warn", f"récolte impossible : {e}")
+                        self.say("warn", f"récolte impossible : {e}")
+                        if "aucune case accessible" in str(e): unreachable.add((self.s.map_id, el)); continue      # not the harvest's fault: look elsewhere
+                        fails += 1
                         if "ne répond depuis" in str(e): silent.add(el)
-                        if len(silent) >= MAX_SILENT_SPOTS:      # several different spots that answer nothing: depletion would not look like that, the tool (a rod...) or the job level is missing
+                        if len(silent) >= MAX_SILENT_SPOTS and not harvested:      # several different spots that answer nothing: depletion would not look like that, the tool (a rod...) or the job level is missing
                             self.say("warn", f"{len(silent)} emplacements de {name} ne répondent pas : outil ou niveau de métier manquant ? je laisse la récolte"); return False
                         if fails >= 6: return False
                 continue
