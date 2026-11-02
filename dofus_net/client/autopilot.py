@@ -407,6 +407,7 @@ class Autopilot:
                         if self.s.map_id != tgt and route(self.s.map_id, tgt) is None and not self._can_discover(tgt) and not self._portal_to(tgt):
                             block(qid, oid, f"objectif « {text} » : aucune route connue (porte non apprise ?)")
                         else: cands.append((0 if self.s.map_id == tgt else reach.get(tgt, 30), qid, oid))
+                    elif o.get("type") == 0 and self.s.item_for_objective(oid) is not None: cands.append((0, qid, oid))      # a quest item in the bag completes it
                     elif o.get("type") == 0:
                         maps = self._known_location_maps(oid, text, reach, qid)
                         if maps: cands.append((reach[maps[0]], qid, oid))
@@ -895,6 +896,16 @@ class Autopilot:
         return done()
 
     def _use_location_objective(self, qid, oid):
+        uid = self.s.item_for_objective(oid)       # "read the recipe": a quest item in the bag completes it (iql), no map to search
+        if uid is not None:
+            self.attempts[oid] += 1; self.goal = gamequests.objective_text(oid)
+            self.say("info", f"objectif : {self.goal} — j'utilise l'objet de quête de mon inventaire")
+            self._act("Utiliser l'objet de quête", lambda: self.s._do_use_item(uid))
+            t0 = time.time()
+            while self._alive() and time.time() - t0 < 4:
+                if not self.s.quests.get(qid, (None, {}))[1].get(oid, False): self.say("info", "objectif accompli"); return True
+                time.sleep(0.4)
+            return self.attempts[oid] < FREE_ATTEMPTS
         text = gamequests.objective_text(oid); maps = self._known_location_maps(oid, text, qid=qid)
         if not maps:
             self.say("warn", f"objectif « {text} » : aucune carte accessible dans la sous-zone indiquée"); return False

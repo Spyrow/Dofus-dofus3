@@ -56,7 +56,7 @@ class Session:
         self.arrival_cell = None   # first cell on the current map: the door we came through is next to it
         self.arrival_inside = False   # True when we came in through a door / trigger cell (not across a border): only then is the arrival cell next to a door
         self._last = {}            # what the client last sent: {"jok": (time, map, last cell), "itz": (time, map, skill, element, stand), "joc": time, "hms": time}
-        self.inv = {}; self.jobxp = {}; self.unavailable = {}   # stack uid -> [item id, quantity]; job id -> {xp, floor, next}; element id -> time until which it gives nothing
+        self.inv = {}; self.inv_fx = {}; self.jobxp = {}; self.unavailable = {}   # stack uid -> [item id, quantity]; job id -> {xp, floor, next}; element id -> time until which it gives nothing
         self._harvest_started, self._harvest_end = threading.Event(), threading.Event()
         self._craft_open, self._table_event, self._crafted_event, self._craft_closed = (threading.Event() for _ in range(4)); self._craft_skill = None
 
@@ -227,11 +227,12 @@ class Session:
             if any(it["position"] not in (None, gamestate.NOT_EQUIPPED) for it in items):
                 with self._lock:
                     self.inv = {it["uid"]: [it["gid"], it["qty"]] for it in items if it["uid"] is not None}
+                    self.inv_fx = {it["uid"]: it["effects"] for it in items if it["uid"] is not None}
                     self.equipped = {it["gid"] for it in items if it["position"] not in (None, gamestate.NOT_EQUIPPED)}
         elif t == gamestate.IQX:
             with self._lock:
                 for it in gamestate.inventory_items(body, True):
-                    if it["uid"] is not None: self.inv[it["uid"]] = [it["gid"], it["qty"]]
+                    if it["uid"] is not None: self.inv[it["uid"]] = [it["gid"], it["qty"]]; self.inv_fx[it["uid"]] = it["effects"]
         elif t == gamejobs.IRX:
             sq = gamejobs.stack_quantity(body)
             with self._lock:
@@ -352,6 +353,21 @@ class Session:
         self.log("action", f"→ ito : équiper « {gamejobs.item_name(gid)} » (objet {uid}, emplacement {position})")
         if not self._equip_evt.wait(4): raise RuntimeError("l'équipement n'a pas été confirmé (iqn)")
         time.sleep(0.6)
+
+    ITEM_OBJECTIVE_EFFECT = 30     # a quest item carries the objective it completes as effect 30 (value = objective id)
+
+    def item_for_objective(self, oid):
+        with self._lock: return next((u for u, fx in self.inv_fx.items() if (self.ITEM_OBJECTIVE_EFFECT, oid) in fx and u in self.inv), None)
+
+    def _do_use_item(self, uid):
+        """Use an inventory item (the recipe / letter that completes an objective): iql {1: uid}. The server answers ibg (objective done) and icj (next one)."""
+        with self._lock: gid = (self.inv.get(uid) or [None])[0]
+        self._send("iql", f_varint(1, uid))
+        self.log("action", f"→ iql : utiliser « {gamejobs.item_name(gid)} » (objet {uid})")
+        time.sleep(1.5)
+
+    def use_item(self, uid):
+        return self.start_action(f"Utiliser l'objet {uid}", lambda: self._do_use_item(int(uid)))
 
     def equip(self, gid):
         return self.start_action(f"Équiper l'objet {gid}", lambda: self._do_equip(int(gid)))
