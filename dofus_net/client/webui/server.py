@@ -147,7 +147,7 @@ class H(BaseHTTPRequestHandler):
             if not accounts.get(m[1]): return self._json({"error": "not found"}, 404)
             sess = gamesession.session(m[1])
             if m[2] == "connect":
-                if not sess.start(): return self._json({"error": "session déjà active"}, 409)
+                if not sess.connect(): return self._json({"error": "session déjà active"}, 409)
             else: sess.stop()
             self._json(sess.view(sess.seq), 202)
         elif p == "/api/groq":

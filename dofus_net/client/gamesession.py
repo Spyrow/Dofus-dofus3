@@ -16,6 +16,9 @@ QUEST_MSGS = {login.ICA, login.ICJ, login.ICB, login.IBG, login.ILX, login.ILF, 
 FIGHT_MSGS = {login.JUO, login.JWJ, login.JVJ, login.JTE, login.JUG, login.JSY, login.JTK, login.JSQ, login.JXI, login.JWP}   # JWP was missing: the fight engine never saw the end of a fight
 JOB_MSGS = gamejobs.MESSAGES | {gamestate.IRL, gamestate.IQX}   # harvest / craft / inventory / job experience (see gamejobs.py)
 KEEP = {login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP} | QUEST_MSGS | FIGHT_MSGS | JOB_MSGS | {gamestate.KSC, gamestate.KRG, gamestate.IRL, gamestate.IQX, gamestate.IPE, gamestate.ISM, gamestate.JOW}
+RECONNECT_PAUSES = (3, 15, 30, 60, 120, 180, 240, 300)
+MAX_SUPERVISED_FAILURES = 5     # failed automatic reconnections (each one already waits through RECONNECT_PAUSES) before giving up
+SUPERVISOR_RETRY = 600          # seconds between two automatic reconnection rounds
 HEARTBEAT = 5          # seconds, same cadence as the real client's kne
 CONNECT_TIMEOUT = 45   # seconds without any character data before giving up
 DOOR_TYPE = 184        # jnj element type of the doors / stairs seen in the captures (resources: 45 wheat, 68 nettle, 124 fish; 114 zaap)
@@ -47,6 +50,7 @@ class Session:
         self._dialog_event = threading.Event(); self.recent = collections.deque(maxlen=200)   # (time, message type) of everything received
         self._act = threading.Lock(); self.busy = None; self._moved = threading.Event(); self._mapchanged = threading.Event()
         self._stop = threading.Event(); self._thread = None; self._lock = threading.RLock()
+        self.keep_alive = False; self.resume_auto = None; self._supervisor = None   # supervisor: reconnects after a crash; resume_auto: autopilot arguments to restart with
         self.equipped = set()   # item ids worn (login inventory, then iqn)
         self._equip_evt = threading.Event(); self._equip_want = None; self.achievements = {}; self._claimed = []; self._claimed_evt = threading.Event()
         self.arrival_cell = None   # first cell on the current map: the door we came through is next to it
@@ -248,6 +252,7 @@ class Session:
                          (" — niveau supérieur !" if old and xp["floor"] > old["floor"] else ""))
         elif t == gamejobs.IQN:      # iqn {1: item uid, 3: position}: worn (1 = weapon...) or back in the bag (63)
             uid, pos = _vi(body, 1), _vi(body, 3)
+            if pos is None: pos = 0      # protobuf leaves out a field equal to 0: the amulet slot
             with self._lock:
                 gid = (self.inv.get(uid) or [None])[0]
                 if gid is not None:
@@ -1092,6 +1097,38 @@ class Session:
         threading.Thread(target=watchdog, daemon=True).start()
         return True
 
+    def connect(self):
+        """start() + supervision: if the connection later drops without being asked (crash, server kick), reconnect and restart the autopilot."""
+        if not self.start(): return False
+        self.keep_alive = True
+        with self._lock:
+            if self._supervisor is None or not self._supervisor.is_alive():
+                self._supervisor = threading.Thread(target=self._supervise, daemon=True); self._supervisor.start()
+        return True
+
+    def _supervise(self):
+        failures = 0
+        while self.keep_alive:
+            time.sleep(2)
+            if self.status not in ("error", "disconnected") or self.auto.on: continue      # connected, connecting, or the autopilot handles its own drops
+            self.log("warn", "Connexion perdue : reconnexion automatique")
+            try: ok = self.reconnect()
+            except Exception as e: self.log("error", f"reconnexion automatique : {type(e).__name__}: {e}"); ok = False
+            if not self.keep_alive: break
+            if not ok:
+                failures += 1
+                if failures >= MAX_SUPERVISED_FAILURES: self.log("error", f"reconnexion automatique abandonnée après {failures} échecs"); self.keep_alive = False; break
+                self.log("warn", f"reconnexion automatique échouée ({failures}/{MAX_SUPERVISED_FAILURES}) : nouvel essai dans {SUPERVISOR_RETRY} s")
+                for _ in range(SUPERVISOR_RETRY):
+                    if not self.keep_alive: return
+                    time.sleep(1)
+                continue
+            failures = 0
+            if self.resume_auto and not self.auto.on:
+                kinds, llm, quest_id = self.resume_auto
+                if self.auto.start(kinds, llm, quest_id): self.log("info", "Autopilote relancé après la reconnexion")
+                else: self.log("warn", "Autopilote : impossible de le relancer après la reconnexion")
+
     def reconnect(self, timeout=90):
         """Drop the game connection and open a new one (the server then tells us the real position). Does NOT stop the autopilot.
         -> True once connected again."""
@@ -1099,16 +1136,17 @@ class Session:
         self._stop.set()
         end = time.time() + 20
         while self.status in ("connecting", "connected") and time.time() < end: time.sleep(0.3)
-        for pause in (3, 15, 30, 60):      # let the game server release the character: after a drop in a fight it may keep it for a minute
+        for pause in RECONNECT_PAUSES:      # let the game server release the character: after a drop in a fight it keeps it for several minutes
             time.sleep(pause)
             if not self.start(): return False
             end = time.time() + timeout
             while self.status == "connecting" and time.time() < end: time.sleep(0.3)
             if self.status == "connected": time.sleep(3); return True      # let the map and the actors load
-            self.log("warn", f"reconnexion refusée ({self.error or self.status}) : nouvel essai dans {pause * 2 if pause > 3 else 15} s")
+            self.log("warn", f"reconnexion refusée ({self.error or self.status}) : nouvel essai dans {RECONNECT_PAUSES[RECONNECT_PAUSES.index(pause) + 1] if pause != RECONNECT_PAUSES[-1] else 0} s")
         return False
 
     def stop(self):
+        self.keep_alive = False
         self.auto.stop()
         if self.status in ("connecting", "connected"): self.log("action", "Déconnexion demandée")
         self._stop.set()

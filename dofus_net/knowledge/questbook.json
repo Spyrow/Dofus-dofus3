@@ -188,7 +188,7 @@
  "quests": {
   "1632": {
    "name": "Le village dans les nuages",
-   "seen": 88,
+   "seen": 95,
    "steps": {
     "2252": {
      "name": "Le village dans les nuages",
@@ -206,7 +206,7 @@
   },
   "1633": {
    "name": "Mort au rat !",
-   "seen": 20,
+   "seen": 30,
    "steps": {
     "2253": {
      "name": "Mort au rat !",
@@ -221,7 +221,7 @@
   },
   "1634": {
    "name": "Espoirs et tragédies",
-   "seen": 80,
+   "seen": 119,
    "steps": {
     "2254": {
      "name": "Espoirs et tragédies",
@@ -238,7 +238,7 @@
   },
   "1635": {
    "name": "Dans la gueule du Milimilou",
-   "seen": 187,
+   "seen": 424,
    "steps": {
     "2255": {
      "name": "Dans la gueule du Milimilou",
@@ -285,7 +285,7 @@
   },
   "1639": {
    "name": "Transport peu commun",
-   "seen": 171,
+   "seen": 452,
    "steps": {
     "2259": {
      "name": "Transport peu commun",
@@ -347,7 +347,7 @@
   },
   "1643": {
    "name": "Champs de bataille",
-   "seen": 23,
+   "seen": 28,
    "steps": {
     "2263": {
      "name": "Champs de bataille",
@@ -363,7 +363,7 @@
   },
   "1644": {
    "name": "Coups d'épée dans l'eau",
-   "seen": 7,
+   "seen": 47,
    "steps": {
     "2264": {
      "name": "Coups d'épée dans l'eau",
@@ -378,7 +378,7 @@
   },
   "1645": {
    "name": "Décime-moi des bouftous",
-   "seen": 8,
+   "seen": 56,
    "steps": {
     "2265": {
      "name": "Décime-moi des bouftous",
@@ -394,7 +394,7 @@
   },
   "1646": {
    "name": "Chasse aux chapardams",
-   "seen": 3,
+   "seen": 18,
    "steps": {
     "2266": {
      "name": "Chasse aux chapardams",
@@ -409,7 +409,7 @@
   },
   "1647": {
    "name": "Leçon d'humilité",
-   "seen": 6,
+   "seen": 12,
    "steps": {
     "2267": {
      "name": "Leçon d'humilité",
@@ -422,7 +422,7 @@
   },
   "1648": {
    "name": "Des chafers qui marchent",
-   "seen": 412,
+   "seen": 584,
    "steps": {
     "2268": {
      "name": "Des chafers qui marchent",
@@ -441,7 +441,7 @@
   },
   "1649": {
    "name": "Produits naturels",
-   "seen": 254,
+   "seen": 297,
    "steps": {
     "2269": {
      "name": "Produits naturels",
@@ -458,7 +458,7 @@
   },
   "1650": {
    "name": "La hache et la pioche",
-   "seen": 23,
+   "seen": 110,
    "steps": {
     "2270": {
      "name": "La hache et la pioche",
@@ -473,7 +473,7 @@
   },
   "1651": {
    "name": "Boune un jour, boune toujours",
-   "seen": 11,
+   "seen": 21,
    "steps": {
     "2271": {
      "name": "Boune un jour, boune toujours",
@@ -508,7 +508,7 @@
   },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 553,
+   "seen": 556,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",
@@ -522,7 +522,7 @@
   },
   "1959": {
    "name": "On marche sur des œufs",
-   "seen": 108,
+   "seen": 123,
    "steps": {
     "2629": {
      "name": "On marche sur des œufs",
@@ -539,7 +539,7 @@
   },
   "1973": {
    "name": "Souffre-douleur",
-   "seen": 260,
+   "seen": 369,
    "steps": {
     "2644": {
      "name": "Souffre-douleur",
@@ -566,7 +566,7 @@
   },
   "1975": {
    "name": "Ça tombe à l'eau",
-   "seen": 292,
+   "seen": 324,
    "steps": {
     "2635": {
      "name": "Ça tombe à l'eau",
@@ -579,14 +579,34 @@
       "13957": "Aller voir Didier Jean",
       "13958": "Aller voir Tek Abir",
       "13959": "Chercher Camille Démouleur",
-      "13960": "Vaincre les gredins"
+      "13960": "Vaincre les gredins",
+      "13961": "Aller voir Camille Démouleur",
+      "13962": "Aller voir Al Etsop",
+      "13963": "Aller voir Delcour Vitt",
+      "13964": "Aller voir Aisling",
+      "13965": "Aller voir Rodrigue Olpa",
+      "13966": "Aller voir Kaulysse Himo"
+     }
+    }
+   }
+  },
+  "1976": {
+   "name": "Six pieds sous terre",
+   "seen": 43,
+   "steps": {
+    "2636": {
+     "name": "Six pieds sous terre",
+     "objectives": {
+      "13967": "Interroger les glandeurs du zaap",
+      "13968": "Aller voir Gasdaure",
+      "13969": "Chercher les touristes"
      }
     }
    }
   },
   "1978": {
    "name": "Bière qui roule n'amasse pas mousse",
-   "seen": 3,
+   "seen": 6,
    "steps": {
     "2612": {
      "name": "Bière qui roule n'amasse pas mousse",
@@ -599,7 +619,7 @@
   },
   "1979": {
    "name": "Combat de rue",
-   "seen": 238,
+   "seen": 271,
    "steps": {
     "2613": {
      "name": "Combat de rue",
@@ -642,6 +662,18 @@
     }
    }
   },
+  "1992": {
+   "name": "Chacha Blues",
+   "seen": 31,
+   "steps": {
+    "2653": {
+     "name": "Chacha Blues",
+     "objectives": {
+      "14154": "Donner à boire et à manger à Soki"
+     }
+    }
+   }
+  },
   "1994": {
    "name": "Les deux font l'impair",
    "seen": 7,
@@ -671,7 +703,7 @@
   },
   "2009": {
    "name": "Conseil de classe",
-   "seen": 19,
+   "seen": 21,
    "steps": {
     "2631": {
      "name": "Conseil de classe",
@@ -683,7 +715,7 @@
   },
   "2512": {
    "name": "Le métier des aventuriers",
-   "seen": 161,
+   "seen": 166,
    "steps": {
     "3193": {
      "name": "Le métier des aventuriers",
@@ -696,7 +728,7 @@
   },
   "2513": {
    "name": "Préparation au combat",
-   "seen": 13,
+   "seen": 21,
    "steps": {
     "3194": {
      "name": "Préparation au combat",
@@ -724,6 +756,19 @@
       "5247": "Ramener à Anta Brok : x1 Plume Chimérique",
       "5248": "Ramener à Nina Chichi : x1 Ficelle de Vigne",
       "5249": "Ramener à Regnator : x1 Culotte en feuille"
+     }
+    }
+   }
+  },
+  "894": {
+   "name": "Mieux vaut ne pas se fier à la première impression",
+   "seen": 17,
+   "steps": {
+    "1510": {
+     "name": "Mieux vaut ne pas se fier à la première impression",
+     "objectives": {
+      "5510": "Aller voir Nacf Virgil",
+      "5511": "Feuilleter le livre illustrant la légende de Steff Taff"
      }
     }
    }
@@ -812,33 +857,71 @@
    ],
    "qid": 1642
   },
-  "9837": {
+  "9832": {
    "count": 1,
    "kind": "fight",
-   "last": 1793306203,
-   "map": 153878786,
+   "last": 1793529538,
+   "map": 153878788,
    "monsters": [
-    4108,
+    970
+   ],
+   "qid": 1643
+  },
+  "9833": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793529510,
+   "map": 153878788,
+   "monsters": [
+    979
+   ],
+   "qid": 1643
+  },
+  "9834": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793529579,
+   "map": 153878788,
+   "monsters": [
+    980
+   ],
+   "qid": 1643
+  },
+  "9835": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793529481,
+   "map": 153878788,
+   "monsters": [
+    981
+   ],
+   "qid": 1643
+  },
+  "9837": {
+   "count": 2,
+   "kind": "fight",
+   "last": 1793531196,
+   "map": 153878785,
+   "monsters": [
     4109
    ],
    "qid": 1644
   },
   "9838": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793306203,
-   "map": 153878786,
+   "last": 1793531263,
+   "map": 153878785,
    "monsters": [
-    4108,
-    4109
+    4108
    ],
    "qid": 1644
   },
   "9839": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793306271,
-   "map": 153878528,
+   "last": 1793531229,
+   "map": 153878785,
    "monsters": [
     4109,
     4110
@@ -846,120 +929,115 @@
    "qid": 1644
   },
   "9841": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793306541,
-   "map": 153879300,
+   "last": 1793534863,
+   "map": 153880836,
    "monsters": [
-    971,
-    972,
-    973
+    972
    ],
    "qid": 1645
   },
   "9842": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793306541,
+   "last": 1793538007,
    "map": 153879300,
    "monsters": [
-    971,
-    972,
     973
    ],
    "qid": 1645
   },
   "9843": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793306541,
-   "map": 153879300,
+   "last": 1793534929,
+   "map": 153880836,
    "monsters": [
     971,
-    972,
-    973
+    984
    ],
    "qid": 1645
   },
   "9844": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793307310,
-   "map": 153879301,
+   "last": 1793534888,
+   "map": 153880836,
    "monsters": [
-    972,
     984
    ],
    "qid": 1645
   },
   "9846": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793307583,
-   "map": 153879298,
+   "last": 1793539397,
+   "map": 153879552,
    "monsters": [
-    4105,
-    4106
+    4105
    ],
    "qid": 1646
   },
   "9847": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793307583,
-   "map": 153879298,
+   "last": 1793539658,
+   "map": 153879552,
    "monsters": [
-    4105,
     4106
    ],
    "qid": 1646
   },
   "9848": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793307448,
-   "map": 153879298,
+   "last": 1793539703,
+   "map": 153879552,
    "monsters": [
-    982
+    982,
+    4106
    ],
    "qid": 1646
   },
   "9852": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793341616,
-   "map": 153880578,
+   "last": 1793542934,
+   "map": 153881090,
    "monsters": [
     4046
    ],
    "qid": 1648
   },
   "9853": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793341590,
-   "map": 153880578,
+   "last": 1793544663,
+   "map": 153881090,
    "monsters": [
     4047
    ],
    "qid": 1648
   },
   "9854": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793341662,
-   "map": 153881089,
+   "last": 1793544538,
+   "map": 153881090,
    "monsters": [
     4048
    ],
    "qid": 1648
   },
   "9855": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793308129,
+   "last": 1793544746,
    "map": 153880578,
    "monsters": [
+    4047,
+    4048,
     4049
    ],
    "qid": 1648
