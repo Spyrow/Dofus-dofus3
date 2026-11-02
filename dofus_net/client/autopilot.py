@@ -299,6 +299,7 @@ class Autopilot:
                         if self.s.dialog: self._dialog(); continue
                         if self._dungeon_step(): continue
                         if self._gear_farm(): continue
+                        if self.quest_id is None and self._start_new_quests(incarnam_only=True): continue      # the Incarnam quests not begun yet come before anything else
                         obj, why = self._pick()
                         if obj is None: obj, why2 = self._pick(any_world=True); why = why if obj is None else why2       # nothing left here: the other world (back through the portal)
                         if obj is None and time.time() - self._last_sync > 20:   # the server does not push the next step by itself: ask for the fresh state, once in a while
@@ -324,6 +325,7 @@ class Autopilot:
                         self._note_deaths(obj[1], getattr(self.s, "deaths", 0) - deaths0)
                         if not done:
                             self.say("info", f"objectif « {gamequests.objective_text(obj[1])} » abandonné" + ("" if self._alive() else " (arrêt demandé ou déconnexion)"))
+                            if not self._alive() and not self._stop.is_set(): self.attempts[obj[1]] += max(MAX_ATTEMPTS, FREE_ATTEMPTS) // 2      # the connection dropped on it: two drops and it is left aside, it may be what kicks us
                             if o.get('type') == CRAFT_TYPE and self._alive(): time.sleep(0.5); continue   # a craft that lacks a drop must not stop the other quests (_pick skips it after MAX_ATTEMPTS)
                             if self.llm and self._alive():      # the bot gave up on it: maybe Groq knows where it really is
                                 self._stuck = [obj]
@@ -373,7 +375,7 @@ class Autopilot:
         unsupported = None; cands = []; self._stuck = []
         def block(qid, oid, msg):
             nonlocal unsupported
-            self._stuck.append((qid, oid)); unsupported = unsupported or msg
+            self._stuck.append((qid, oid)); unsupported = msg if unsupported is None else unsupported + (" ; " + msg if unsupported.count(" ; ") < 5 else "")
         with self.s._lock: quests = {q: (st, dict(objs)) for q, (st, objs) in self.s.quests.items()}
         if self.quest_id is not None and self.quest_id not in quests:
             return None, "la quête sélectionnée est terminée ou n'est plus active"
@@ -397,7 +399,7 @@ class Autopilot:
                             block(qid, oid, f"objectif « {text} » : aucune route connue (porte non apprise ?)")
                         else: cands.append((0 if self.s.map_id == tgt else reach.get(tgt, 30), qid, oid))
                     elif o.get("type") == 0:
-                        maps = self._known_location_maps(oid, text, reach)
+                        maps = self._known_location_maps(oid, text, reach, qid)
                         if maps: cands.append((reach[maps[0]], qid, oid))
                         else: block(qid, oid, f"objectif « {text} » : sous-zone ou carte introuvable")
                     else: block(qid, oid, f"objectif « {text} » : carte inconnue")
@@ -451,10 +453,29 @@ class Autopilot:
         self.say("info", f"guide Groq : {why or 'aucune suggestion'}" + (f" — {len(actions)} action(s)" if actions else ""))
         return self._run_actions(actions)
 
-    def _known_location_maps(self, oid, text, reach=None):
-        """Maps for a mapless free-text objective: the exact place remembered in the quest book (coordinates) first, then the subarea named in the text."""
+    def _guide_coords(self, qid, text):
+        """Coordinates the scraped guide gives for an objective: the sentence of the quest's steps sharing the most words with the objective
+        (NPC names first) and holding a [x,y]. -> {"x", "y"} or None."""
+        guide = dpln.find((gamedata.quest_data("quests", qid) or {}).get("name")) if qid else None
+        if not guide or not text: return None
+        words = re.findall(r"[^\W\d_]{4,}", text); skip = {"aller", "voir", "parler", "vaincre", "chercher", "retourner", "donner", "examiner", "fouiller", "feuilleter", "dans", "avec", "pour", "les", "des"}
+        toks = [(gamejobs.norm(w), 2 if w[0].isupper() else 1) for w in words if gamejobs.norm(w) not in skip]
+        if not toks: return None
+        best = None
+        for step in guide.get("steps") or []:
+            for sent in re.split(r"(?<=[.!?])\s+|\n", step):
+                m = re.search(r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]", sent)
+                if not m: continue
+                n = gamejobs.norm(sent); score = sum(w for t, w in toks if re.search(r"(?<![a-z])" + re.escape(t), n))
+                if score and (best is None or score > best[0]): best = (score, int(m[1]), int(m[2]))
+        return {"x": best[1], "y": best[2]} if best else None
+
+    def _known_location_maps(self, oid, text, reach=None, qid=None):
+        """Maps for a mapless free-text objective: the exact place remembered in the quest book (coordinates) first, then the one the scraped guide gives,
+        then the subarea named in the text."""
         hint = questbook.get_hint(oid)
         exact = self._hint_maps(hint) if hint and hint.get("x") is not None else []
+        if not exact and (gc := self._guide_coords(qid, text)): exact = self._hint_maps(gc)
         return exact + [m for m in self._objective_location_maps(text, reach) if m not in exact]
 
     def _hint_maps(self, hint):
@@ -865,7 +886,7 @@ class Autopilot:
         return done()
 
     def _use_location_objective(self, qid, oid):
-        text = gamequests.objective_text(oid); maps = self._known_location_maps(oid, text)
+        text = gamequests.objective_text(oid); maps = self._known_location_maps(oid, text, qid=qid)
         if not maps:
             self.say("warn", f"objectif « {text} » : aucune carte accessible dans la sous-zone indiquée"); return False
         self.attempts[oid] += 1; self.goal = text
@@ -1185,7 +1206,7 @@ class Autopilot:
         self.say("warn", "objectif non validé après la fabrication"); return self.attempts[oid] < MAX_ATTEMPTS
 
     # ---- quests that are not started yet: go and talk to the NPC the scraped guide names ----
-    def _start_new_quests(self):
+    def _start_new_quests(self, incarnam_only=False):
         """Nothing left to do on the active quests: start one of the area's quests that was never begun (finished and active ones are skipped).
         The starter NPC comes from the scraped guide (questreport.starter), its map from the quests that send the player to it.
         -> True if a quest was started (the main loop then follows it)."""
@@ -1193,8 +1214,10 @@ class Autopilot:
         info = gamedata.map_info(self.s.map_id) if self.s.map_id else None
         if not info: return False
         with self.s._lock: done = set(self.s.finished_quests); active = set(self.s.quests)
-        if not done or self._new_quests >= MAX_NEW_QUESTS: return False      # finish what is started before opening more          # the finished list comes with the login: without it everything would look unstarted
-        for qid, q in sorted(questreport.area_quests(info["area"]).items(), key=lambda kv: (kv[1]["level"] or 0, kv[0])):
+        if not done or (self._new_quests >= MAX_NEW_QUESTS and not incarnam_only): return False      # finish what is started before opening more          # the finished list comes with the login: without it everything would look unstarted
+        todo = dict(questreport.area_quests("Incarnam")) if info["area"] != "Incarnam" else {}      # the Incarnam quests left undone come first, wherever we are
+        if not incarnam_only: todo.update(questreport.area_quests(info["area"]))
+        for qid, q in sorted(todo.items(), key=lambda kv: (kv[0] not in questreport.area_quests("Incarnam"), kv[1]["level"] or 0, kv[0])):
             if qid in done or qid in active or qid in self._start_tried or str(qid) in knowledge.load("quests_ignored.json", {}): continue
             if self.s.level and q["level"] and q["level"] > self.s.level + 4: continue      # too hard for now: the list is sorted by level, the next ones are even harder
             self._start_tried.add(qid)
@@ -1214,7 +1237,9 @@ class Autopilot:
             tgt = min(maps, key=lambda m: reach.get(m, 0))
             self.say("info", f"nouvelle quête « {q['name']} » (niveau {q['level']}) : je vais parler à {npc} (carte {tgt})")
             self.goal = f"démarrer « {q['name']} » auprès de {npc}"
-            if self.s.map_id != tgt and not self._travel(tgt): continue
+            if self.s.map_id != tgt and not self._travel(tgt):
+                if not self._alive(): self._start_tried.discard(qid); return False      # the connection dropped: not the quest's fault, and the next ones would fail the same way
+                continue
             actor = self._find_npc(ids[0]) if len(ids) == 1 else next((a for i in ids for a in [self._find_npc(i)] if a is not None), None)
             if actor is None: self.say("warn", f"{npc} introuvable sur la carte {tgt}"); continue
             try: self._act(f"Parler au PNJ {actor}", lambda: self.s._do_talk(actor))

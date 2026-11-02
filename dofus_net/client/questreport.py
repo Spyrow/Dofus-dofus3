@@ -67,6 +67,7 @@ def starter(quest_name):
     -> (npc name, [template ids], [map ids]) or None."""
     g = _guide(quest_name)
     if not g: return None
+    if re.search(r"etre le \d|almanax", gamejobs.norm((g.get("prereq") or "") + " " + " ".join((g.get("steps") or [])[:1]))): return None      # event quest: the NPC is only there on a given date
     text = gamejobs.norm(" ".join((g.get("steps") or [])[:2])); best = None
     gamedata.quest_data("npcs", 0)
     for nid, nm in (gamedata._quest or {}).get("npcs", {}).items():
