@@ -18,6 +18,7 @@ ITX = "itx"   # an interactive element's skills changed {1: {4: .., 5: skill or 
 ITZ = "itz"   # use an interactive element {1: skill, 3: element id}
 HMS, IGK, JXJ, JSR, JWO, JTD, JST = "hms", "igk", "jxj", "jsr", "jwo", "jtd", "jst"   # attack a group / fight placement / ready / cast / end turn / turn-ready / ack
 JUO, JWJ, JVJ, JTE, JUG, JSY, JTK, JSQ = "juo", "jwj", "jvj", "jte", "jug", "jsy", "jtk", "jsq"   # fighters / fighter / turn info / turn ready / sequence end / sequence / stat change / action
+JVL = "jvl"   # sent right after the first jow when the character logs in INSIDE a fight (spell list of the fight)
 JXI, JWP = "jxi", "jwp"   # fight start (placement) / fight end (observed once)
 JNS = "jns"   # one actor arriving on the map
 ILT, IKY = "ilt", "iky"   # talk to an NPC (action, map, actor) / choose a dialog reply
@@ -63,9 +64,13 @@ def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, ent
     c = GameConn(host, PORT); c.s.settimeout(1.0)
     if on_ready: on_ready(c)
     c.send(request(KNC, f_bytes(1, ticket) + f_bytes(2, "fr"))); log("action", "→ knc (ticket)")
-    char_id = None; sent_kod = False
+    char_id = None; sent_kod = False; first_jow = True; pending_jow = None; saw_jvl = False; in_fight_login = False
     while True:
         now = time.time()
+        if pending_jow and now - pending_jow[1] >= 1.2:      # capture of a reconnection inside a fight: the client waits ~1.9 s, then igk + kjt (no jpe) and the server pushes the fight state
+            mid = pending_jow[0]; pending_jow = None
+            if saw_jvl: c.send(request(IGK)); c.send(request(KJT, f_varint(1, mid))); log("action", f"→ carte de combat {mid} chargée (igk + kjt) : reprise du combat")
+            else: c.send(request(KJT, f_varint(1, mid))); c.send(request(JPE, f_varint(1, mid))); log("action", f"→ carte {mid} chargée (kjt + jpe)")
         if (stop is not None and stop.is_set()) or (max_seconds and now - t0 > max_seconds): break
         if heartbeat and now - last_hb >= heartbeat: c.send(request("kne", f_varint(2, 1))); last_hb = now
         try: t, body = c.recv_message()
@@ -87,14 +92,19 @@ def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, ent
             log("action", "→ requêtes « monde chargé » (lnt … kkc)")
         elif t == JOW and enter_map:   # ack the map load like the client (kjt + jpe)
             mid = next((v for f, v in parse(body) if f == 1 and isinstance(v, int)), None)
-            if mid: c.send(request(KJT, f_varint(1, mid))); c.send(request(JPE, f_varint(1, mid))); log("action", f"→ carte {mid} chargée (kjt + jpe)")
+            if mid and first_jow: first_jow = False; saw_jvl = False; pending_jow = (mid, time.time())      # the login map: wait a moment to see whether we are inside a fight
+            elif mid: c.send(request(KJT, f_varint(1, mid))); c.send(request(JPE, f_varint(1, mid))); log("action", f"→ carte {mid} chargée (kjt + jpe)")
+        if t == JVL and pending_jow: saw_jvl = True
         if t == MEQ: c.send(request(KSJ)); log("action", "→ ksj")
+        elif t == "ksk": in_fight_login = True    # the server announces a character still held in a fight
         elif t == KSC:   # {2: {3: character id, ...}}
             sub = _field(body, 2)
             if sub is not None: char_id = _field_varint(sub, 3)
+            if in_fight_login and enter:   # the real client resumes with a bare ksu, not kta
+                c.send(request("ksu")); log("action", "→ ksu (reprise du personnage en combat)")
         elif t == JPX and not sent_kod:
             kod, _a = make_kod(); c.send(request(KOD, f_bytes(1, kod), req_id=2)); sent_kod = True; log("action", "→ kod (échange DH)")
-            if enter and char_id: c.send(request(KTA, f_varint(1, char_id))); log("action", f"→ kta (sélection du personnage {char_id})")
+            if enter and char_id and not in_fight_login: c.send(request(KTA, f_varint(1, char_id))); log("action", f"→ kta (sélection du personnage {char_id})")
     return c
 
 def _field_varint(body, num):

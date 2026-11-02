@@ -1135,6 +1135,7 @@ class Session:
         failures = 0
         while self.keep_alive:
             time.sleep(2)
+            if not self.keep_alive: break      # disconnection asked while we slept
             if self.status not in ("error", "disconnected") or self.auto.on: continue
             if self.status == "error" and re.search(r"HAAPI 4\d\d|certificat|compte inconnu", str(self.error)): self.log("error", "Authentification refusée : pas de reconnexion automatique"); self.keep_alive = False; break      # connected, connecting, or the autopilot handles its own drops
             self.log("warn", "Connexion perdue : reconnexion automatique")
