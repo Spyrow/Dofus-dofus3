@@ -14,3 +14,11 @@ Dès que `DOFUS_ADMIN_PASSWORD_HASH` est défini, **toutes** les pages et appels
 
 Vercel / hébergement « serverless » ne convient pas : le bot garde des connexions de jeu ouvertes en continu.
 Rappel : automatiser le client viole les conditions d'Ankama (risque de bannissement des comptes).
+
+## Piloter depuis le téléphone, l'app restant sur le PC (Tailscale)
+Aucun serveur à louer : `start_mobile.ps1` lance l'interface sur le PC et la publie en HTTPS **uniquement sur votre réseau privé Tailscale** (le téléphone doit y être connecté).
+1. PC : `tailscale up` (connexion dans le navigateur). Console admin Tailscale → DNS : activer **MagicDNS** et **HTTPS Certificates**.
+2. Téléphone : installer l'app Tailscale, se connecter au **même compte**.
+3. PC : `powershell -File dofus_net\deploy\start_mobile.ps1` (première fois : choix du mot de passe admin). Garder la fenêtre ouverte.
+4. Téléphone : ouvrir `https://<nom-du-pc>.<réseau>.ts.net/` (affiché par le script), se connecter (identifiant `admin`). « Ajouter à l'écran d'accueil » pour l'avoir comme une app.
+Le PC doit rester allumé, le jeu et le bot tournent dessus. Le comptes se connectent depuis le PC (étape PKCE locale).
