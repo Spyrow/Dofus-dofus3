@@ -1,6 +1,7 @@
-# Protocole de jeu Dofus 3 (build 3.7.12.12) — observations
+# Protocole de jeu Dofus 3 (build 3.7.13.17) — observations
 
 Noms de messages obfusqués, valables pour ce build uniquement : les re-dériver avec `tools/scan_connect.py` après chaque mise à jour.
+Passage 3.7.12.12 -> 3.7.13.17 (capture du 2026-11-03) : seule la version envoyée à la connexion a changé ; les noms de la phase de connexion (knc, kog, meq, ksj, kod, ksc, jpx, kta, lnt…kkc) sont identiques. Les noms de jeu (déplacement, quêtes, combat) ne sont pas couverts par cette capture.
 Trame : varint de longueur + protobuf ; client→serveur `{4: {1: id requête (-1 = pas de réponse), 2: Any}}`, serveur→client `{3: {1: Any}}`,
 `Any = {1: "type.ankama.com/<nom>", 2: corps}`.
 

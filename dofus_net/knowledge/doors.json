@@ -725,6 +725,14 @@
    "cell": null,
    "to": 153881090,
    "stand": 410
+  },
+  {
+   "kind": "step",
+   "element": null,
+   "skill": null,
+   "cell": 358,
+   "to": 153486340,
+   "stand": null
   }
  ],
  "153358340": [

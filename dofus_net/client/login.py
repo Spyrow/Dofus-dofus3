@@ -30,7 +30,7 @@ READY = [("lnt", f_varint(1, 1)), ("kne", f_varint(2, 1)), ("kkn", b""), ("kkt",
          ("jgm", f_varint(1, 3)), ("jgm", b""), ("jcy", b""), ("kkc", b"")]
 
 HOST, PORT = "dofus2-co-production.ankama-games.com", 5555
-CLIENT_VERSION = "3.7.12.12"
+CLIENT_VERSION = "3.7.13.17"
 SERVER_ID = 291     # id sent in the 'select server' request in the capture (ticket host: dofus2-ga-imagiro)
 
 KTB, KSP, KRU, KSL, KSN = "ktb", "ksp", "kru", "ksl", "ksn"   # random name request / the name offered / create the character / select it after the creation / name refused

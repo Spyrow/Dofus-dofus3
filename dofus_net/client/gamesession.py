@@ -91,7 +91,7 @@ class Session:
     def view(self, since=0):
         with self._lock:
             return {"status": self.status, "error": self.error, "since": self.since, "character": self.character, "map": self.map, "vitals": self._vitals(),
-                    "seq": self.seq, "log": [e for e in self.journal if e["n"] > since], "chat": [e for e in self.chat if e["n"] > since]}
+                    "help": self.auto.help, "seq": self.seq, "log": [e for e in self.journal if e["n"] > since], "chat": [e for e in self.chat if e["n"] > since]}
 
     # ---- map state (fed by the message loop) ----
     def _on_map_message(self, t, body):
@@ -173,6 +173,7 @@ class Session:
             with self._lock:
                 if qid in self.quests and oid in self.quests[qid][1]: self.quests[qid][1][oid] = False   # done (the next icj confirms)
             self.log("event", f"Objectif accompli : {gamequests.objective_text(oid)}")
+            self._learn_use(oid)
         elif t == login.ILX:
             actor = _vi(body, 5)
             with self._lock: self.dialog = {"actor": actor, "text": None, "replies": []}
@@ -607,6 +608,26 @@ class Session:
     def mapdata(self):
         return gamemaps.load(self.map_id) if self.map_id else None
 
+    def _element_views(self, mid, known):
+        """Interactive elements for the map drawing: kind (door / zaap / resource / other) and the best known cell (None when only the sprite is known)."""
+        if not mid: return []
+        learned = knowledge.load("element_cells.json", {}).get(str(mid), {}); cells = gamemaps.element_cells(mid); pos = gamemaps.element_positions(mid)
+        try: doors, skills = gamejobs.door_types(), gamejobs.skills()
+        except Exception: doors, skills = set(), {}
+        out = []
+        for k, v in list(self.elements.items()):
+            cell, est = v["cell"], False
+            if cell is None and k in known and known[k].get("cell") is not None: cell = known[k]["cell"]
+            if cell is None: cell = cells.get(k)
+            if cell is None and isinstance(learned.get(str(k)), int): cell = learned[str(k)]
+            if cell is None and k in pos: cell, est = gamemaps.estimate_cell(pos[k]), True
+            t = v["type"]
+            kind = "door" if k in known or t in doors or t == DOOR_TYPE else "zaap" if t == 114 else "resource" if ((skills.get(t) or {}).get("item") or -1) > 0 else "other"
+            out.append({"element": k, "skill": v["skill"], "cell": cell, "approx": est, "kind": kind, "type": t,
+                        "name": gamedata.get("interactives", v["interactive"]) if v["interactive"] is not None else None,
+                        "to": gamedata.map_info(known[k]["to"]) if k in known else None})
+        return out
+
     def mapview(self):
         """Everything the UI needs to draw the current map and its controls."""
         with self._lock: mid, me, actors, busy = self.map_id, self.my_cell, dict(self.actors), self.busy
@@ -619,11 +640,12 @@ class Session:
         out = {"live": live, "map_id": mid, "info": info, "me": me, "busy": busy,
                "actors": {str(k): v for k, v in actors.items() if k != self.char_id}}
         known = {e["element"]: e for e in gamedoors.from_map(mid)} if mid else {}
-        out["elements"] = [{"element": k, "skill": v["skill"], "cell": v["cell"], "type": v["type"], "name": gamedata.get("interactives", v["interactive"]) if v["interactive"] is not None else None,
-                            "to": gamedata.map_info(known[k]["to"]) if k in known else None} for k, v in list(self.elements.items())]
+        out["elements"] = self._element_views(mid, known)
         out["groups"] = [{"actor": a, "cell": actors.get(a), "monsters": [{"id": m, "name": gamedata.quest_data("monsters", m) or f"monstre {m}"} for m in ms]}
                          for a, ms in list(self.groups.items())]
         out["in_fight"] = self.in_fight
+        out["help"] = self.auto.help
+        out["passages"] = [{"cell": e["cell"], "guess": bool(e.get("guess")), "to": gamedata.map_info(e["to"])} for e in gamedoors.from_map(mid) if e.get("kind") == "step" and e.get("cell") is not None] if mid else []
         out["npcs"] = [{"actor": a, "cell": actors.get(a), "tpl": tpl, "name": gamedata.quest_data("npcs", tpl) or f"PNJ {tpl}"}
                        for a, tpl in list(self.npcs.items())]
         if m:
@@ -844,6 +866,7 @@ class Session:
                 if best is None: raise RuntimeError("aucune case accessible à côté de l'élément")
                 if len(best) > 1: self._walk(best)
         self._mapchanged.clear()
+        self._last_use = {"t": time.time(), "map": frm, "element": element, "skill": e["skill"], "stand": self.my_cell}      # learned if an objective is validated right after (IBG)
         self._send(login.ITZ, (f_varint(1, e["skill"]) if e["skill"] else b"") + f_varint(3, element))   # protobuf omits a zero skill id
         self.log("action", f"→ itz : élément {element} (compétence {e['skill']})")
         if until:      # quest objective ("read the book", "use ..."): done when until() says so; a map change is a door and learned below
@@ -927,6 +950,22 @@ class Session:
             except RuntimeError: time.sleep(1.2)
         time.sleep(0.8)
 
+    USE_WINDOW = 8      # seconds between an element use and the objective validation for the two to be linked
+
+    def _learn_use(self, oid):
+        """An objective was just validated: if an element was used on this map a moment ago, remember it (knowledge/element_uses.json) so that
+        every account replays it (use_recorded). Objectives already recorded are left alone."""
+        u = getattr(self, "_last_use", None)
+        if not u or u["map"] != self.map_id or time.time() - u["t"] > self.USE_WINDOW or u["stand"] is None: return
+        with knowledge._lock:
+            d = knowledge.load("element_uses.json", {})
+            if str(oid) in d: return
+            d[str(oid)] = {"map": u["map"], "steps": [{"element": u["element"], "skill": u["skill"], "stand": u["stand"]}]}
+            knowledge.save("element_uses.json", d)
+            bad = knowledge.load(self.auto._kf(autopilot.UNVALIDATED_FILE), {})      # no longer an objective the robot cannot validate
+            if bad.pop(str(oid), None): knowledge.save(self.auto._kf(autopilot.UNVALIDATED_FILE), bad)
+        self.log("info", f"Appris : objectif {oid} validé par l'élément {u['element']} (case {u['stand']})")
+
     def use_recorded(self, oid, until):
         """Replay the element uses learned from a real session for objective `oid` (knowledge/element_uses.json). -> True when done."""
         rec = knowledge.load("element_uses.json", {}).get(str(oid))
@@ -950,9 +989,9 @@ class Session:
         with self._lock: els = {k: dict(v) for k, v in self.elements.items()}
         def name(e): return (gamedata.get("interactives", els[e]["interactive"]) or "") if els[e].get("interactive") is not None else ""
         # a named element that matches no word of the objective is a resource / workshop / zaap: never touched (harvesting locks the character)
-        order = sorted((e for e in els if e not in known and els[e].get("skill") and
-                        ((bool(name(e)) and any(w in name(e).lower() for w in words)) if strict else (not name(e) or any(w in name(e).lower() for w in words)))),
-                       key=lambda e: (not name(e), e))
+        ok = lambda e: els[e].get("skill") and ((bool(name(e)) and any(w in name(e).lower() for w in words)) if strict else (not name(e) or any(w in name(e).lower() for w in words)))
+        order = sorted((e for e in els if e not in known and ok(e)), key=lambda e: (not name(e), e))
+        order += sorted(e for e in els if e in known and ok(e))      # last resort: an element learned as a door may also validate the objective (a tomb that opens a fight)
         for e in order:
             if self._cancel(): return False
             cells = (gamemaps.stand_candidates(m, pos[e], max_cells, 260) if e in pos else []) + [None]      # the current cell is the last resort
@@ -1081,7 +1120,7 @@ class Session:
         d = None
         if dialog:
             tpl = npcs.get(dialog.get("actor")); d = dict(dialog, npc=gamedata.quest_data("npcs", tpl) if tpl else None)
-        return {"auto": {"on": self.auto.on, "goal": self.auto.goal, "quest_id": self.auto.quest_id}, "live": self.status == "connected", "quests": [gamequests.quest_view(q, st, objs) for q, (st, objs) in quests.items()], "dialog": d,
+        return {"auto": {"on": self.auto.on, "goal": self.auto.goal, "quest_id": self.auto.quest_id, "help": self.auto.help}, "live": self.status == "connected", "quests": [gamequests.quest_view(q, st, objs) for q, (st, objs) in quests.items()], "dialog": d,
                 "npcs": [{"actor": a, "cell": actors.get(a), "name": gamedata.quest_data("npcs", t) or f"PNJ {t}"} for a, t in npcs.items()]}
 
     def _do_talk(self, actor):

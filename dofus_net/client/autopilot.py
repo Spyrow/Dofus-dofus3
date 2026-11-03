@@ -7,7 +7,7 @@ It also stops when a fight starts, when the character disconnects, after MAX_ATT
 
 Travel uses %APPDATA%/dofus_net/mapgraph.json (tools/index_maps.py): {map id: [top, bottom, left, right] neighbour ids}."""
 import collections, json, os, re, threading, time, unicodedata
-import dpln, gamedata, gamedoors, gamejobs, gamemaps, gamequests, guide, knowledge, questbook, store, tutorial
+import dpln, notify, gamedata, gamedoors, gamejobs, gamemaps, gamequests, guide, knowledge, questbook, store, tutorial
 
 GRAPH_PATH = os.path.join(os.path.dirname(store.PATH), "mapgraph.json")
 SIDES = ("top", "bottom", "left", "right")
@@ -47,6 +47,7 @@ MAX_LLM_STEPS = 12         # actions suggested by the guide per run
 MAX_SEARCH_MAPS = 25      # maps visited while looking for monsters
 REST_SECONDS = 8          # pause between two fights
 MAX_TRAVEL_STEPS = 80
+HELP_WAIT = 300      # seconds the autopilot waits for the user when it cannot find an exit
 # replies that end or refuse a conversation; the autopilot prefers any other reply (the first one), and falls back to the first reply
 REFUSE = re.compile(r"renonc|refus|(?:dois|dois bien|vais|faut) partir|partir (?:maintenant|plus tard|sans)|rester|quitter|s'en aller|laisser|abandon|fuir|pas int[ée]ress|plus tard|non,|saluer", re.I)
 
@@ -154,7 +155,7 @@ class DesyncError(RuntimeError):
 class Autopilot:
     def __init__(self, sess):
         self.s = sess; self.explore = 0; self.discover_tries = collections.Counter(); self.on = False; self.goal = None; self.quest_id = None; self.kinds = {"talk", "fight", "craft"}; self.llm = False; self.llm_steps = 0; self._last_sync = 0.0; self.want_fight = False; self.fight_played = False; self._stuck = []; self._hinted = set()
-        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}; self._start_tried = set(); self._new_quests = 0; self._prefer_words = set(); self._explored = set(); self._gear_skip = set(); self._incarnam_ids = None; self._escorts = set(); self._steps_taken = collections.deque(maxlen=40); self._danger = set(); self._worlds_tried = set(); self._incarnam_retried = False
+        self._stop = threading.Event(); self._thread = None; self.attempts = collections.Counter(); self._location_maps = {}; self._start_tried = set(); self._new_quests = 0; self._prefer_words = set(); self._explored = set(); self._gear_skip = set(); self._incarnam_ids = None; self._escorts = set(); self._steps_taken = collections.deque(maxlen=40); self._danger = set(); self._worlds_tried = set(); self._incarnam_retried = False; self.help = None
 
     # ---- control ----
     def start(self, kinds=None, llm=False, quest_id=None):
@@ -1410,7 +1411,7 @@ class Autopilot:
 
     def _travel(self, goal):
         """Walk/use doors until map `goal` is reached. A step must change the map: if it does not, give up instead of looping."""
-        prev = None; blocked_retries = 0; resyncs = 0
+        prev = None; blocked_retries = 0; resyncs = 0; helps = 0
         for _ in range(MAX_TRAVEL_STEPS):
             cur = self.s.map_id
             if not self._alive(): return False
@@ -1420,13 +1421,19 @@ class Autopilot:
                 time.sleep(0.25)
             if cur == prev: self.say("error", "le voyage n'avance plus (la carte n'a pas changé après l'étape), abandon"); return False
             r = route(cur, goal)
-            if r is None: self.say("error", f"aucune route de la carte {cur} à la carte {goal} (porte non apprise, zaap ou carte inconnue ?)"); return False
+            if r is None:
+                reason = f"aucune route de la carte {cur} à la carte {goal} (porte non apprise, zaap ou carte inconnue ?)"
+                helps += 1
+                if helps <= 3 and self._ask_help(cur, reason): prev = None; continue
+                self.say("error", reason); return False
             kind, arg = r[0]
             self.say("info", f"voyage vers {goal} : {len(r)} étape(s), prochaine : " + (arg if kind == "side" else f"case-déclencheur {arg['cell']}" if arg.get("kind") == "step" else f"porte (élément {arg['element']})"))
             key = (cur, arg if kind == "side" else arg.get("element") or arg.get("cell")); now = time.time()
             self._steps_taken.append((now, key))
             if sum(1 for t, k in self._steps_taken if k == key and now - t < 300) > 4:      # A->B->A->B... : every step changes the map, so the check below never fires
-                self.say("error", f"le voyage tourne en rond (même étape répétée depuis la carte {cur}), abandon"); self._steps_taken.clear(); return False
+                self._steps_taken.clear(); helps += 1
+                if helps <= 3 and self._ask_help(cur, f"le voyage tourne en rond (même étape répétée depuis la carte {cur})"): prev = None; continue
+                self.say("error", f"le voyage tourne en rond (même étape répétée depuis la carte {cur}), abandon"); return False
             prev = cur
             try:
                 if kind == "side": self._act(f"Changer de carte ({arg})", lambda: self.s._do_change_map(arg))
@@ -1449,8 +1456,27 @@ class Autopilot:
                     except RuntimeError as e2: self.say("warn", f"test de porte impossible : {e2}")
                 if kind != "side" and arg.get("kind") == "step" and self.s.npcs and self._alive() and self._talk_any(cur):      # a closed room whose exit is not a border: its NPC may open it
                     prev = None; continue
+                helps += 1
+                if helps <= 3 and self._alive() and self._ask_help(cur, f"étape impossible depuis la carte {cur} : {e}"): prev = None; continue
                 self.say("error", f"voyage interrompu : {e}"); return False
         self.say("error", "voyage trop long, abandon"); return False
+
+    def _ask_help(self, cur, reason):
+        """Stuck on map `cur` (no known exit / the step failed): hand over to the user, who finds the cell or door by hand in the Map tab.
+        What they do is learned as any passage (gamesession._learn_passage), so the next trip needs no help. -> True once the map changed."""
+        self.say("warn", f"BLOQUÉ : {reason}. Prends la main dans l'onglet Map (clique la case de sortie, utilise la porte) : je l'apprends et je reprends ensuite ({HELP_WAIT // 60} min max)")
+        self.help = {"map": cur, "reason": reason, "since": time.time()}
+        notify.send("Dofus : autopilote bloque", f"{self.s.character or 'Personnage'} : {reason}. Trouve la case ou la porte a la main.")
+        try:
+            end = time.time() + HELP_WAIT
+            while self._alive() and time.time() < end:
+                if self.s.map_id != cur and self.s.map_id is not None:
+                    time.sleep(2.0)      # let the passage be learned before planning again
+                    self.say("event", "reprise de l'autopilote après ton intervention"); self._steps_taken.clear(); return True
+                time.sleep(0.5)
+            if self._alive(): self.say("error", "aucune intervention : abandon")
+            return False
+        finally: self.help = None
 
     def _talk_any(self, frm):
         """Talk to the NPCs of the current map one after the other (answering their dialogs) until the map changes. -> True if it did."""

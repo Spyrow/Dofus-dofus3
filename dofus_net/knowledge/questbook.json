@@ -188,7 +188,7 @@
  "quests": {
   "1631": {
    "name": "Réponses à tout",
-   "seen": 432,
+   "seen": 434,
    "steps": {
     "2251": {
      "name": "Réponses à tout",
@@ -219,7 +219,7 @@
   },
   "1633": {
    "name": "Mort au rat !",
-   "seen": 446,
+   "seen": 448,
    "steps": {
     "2253": {
      "name": "Mort au rat !",
@@ -251,7 +251,7 @@
   },
   "1635": {
    "name": "Dans la gueule du Milimilou",
-   "seen": 615,
+   "seen": 653,
    "steps": {
     "2255": {
      "name": "Dans la gueule du Milimilou",
@@ -267,7 +267,7 @@
   },
   "1637": {
    "name": "La galette secrète",
-   "seen": 555,
+   "seen": 593,
    "steps": {
     "2257": {
      "name": "La galette secrète",
@@ -298,7 +298,7 @@
   },
   "1639": {
    "name": "Transport peu commun",
-   "seen": 552,
+   "seen": 572,
    "steps": {
     "2259": {
      "name": "Transport peu commun",
@@ -312,7 +312,7 @@
   },
   "1640": {
    "name": "Des vestiges de légende",
-   "seen": 116,
+   "seen": 130,
    "steps": {
     "2260": {
      "name": "Des vestiges de légende",
@@ -329,7 +329,7 @@
   },
   "1641": {
    "name": "Vu du ciel",
-   "seen": 225,
+   "seen": 231,
    "steps": {
     "2261": {
      "name": "Vu du ciel",
@@ -435,7 +435,7 @@
   },
   "1648": {
    "name": "Des chafers qui marchent",
-   "seen": 796,
+   "seen": 811,
    "steps": {
     "2268": {
      "name": "Des chafers qui marchent",
@@ -471,7 +471,7 @@
   },
   "1650": {
    "name": "La hache et la pioche",
-   "seen": 114,
+   "seen": 116,
    "steps": {
     "2270": {
      "name": "La hache et la pioche",
@@ -552,7 +552,7 @@
   },
   "1973": {
    "name": "Souffre-douleur",
-   "seen": 499,
+   "seen": 539,
    "steps": {
     "2644": {
      "name": "Souffre-douleur",
@@ -579,7 +579,7 @@
   },
   "1975": {
    "name": "Ça tombe à l'eau",
-   "seen": 642,
+   "seen": 644,
    "steps": {
     "2635": {
      "name": "Ça tombe à l'eau",
@@ -605,7 +605,7 @@
   },
   "1976": {
    "name": "Six pieds sous terre",
-   "seen": 130,
+   "seen": 168,
    "steps": {
     "2636": {
      "name": "Six pieds sous terre",
@@ -632,7 +632,7 @@
   },
   "1979": {
    "name": "Combat de rue",
-   "seen": 358,
+   "seen": 396,
    "steps": {
     "2613": {
      "name": "Combat de rue",
@@ -677,7 +677,7 @@
   },
   "1992": {
    "name": "Chacha Blues",
-   "seen": 420,
+   "seen": 460,
    "steps": {
     "2653": {
      "name": "Chacha Blues",
@@ -702,7 +702,7 @@
   },
   "1998": {
    "name": "Qui sème le vent récolte l'Artempeth",
-   "seen": 73,
+   "seen": 75,
    "steps": {
     "2630": {
      "name": "Qui sème le vent récolte l'Artempeth",
@@ -801,7 +801,7 @@
   },
   "894": {
    "name": "Mieux vaut ne pas se fier à la première impression",
-   "seen": 104,
+   "seen": 142,
    "steps": {
     "1510": {
      "name": "Mieux vaut ne pas se fier à la première impression",
