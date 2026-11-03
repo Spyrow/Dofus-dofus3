@@ -52,8 +52,14 @@ def main():
     out["characteristics"] = {k: {"keyword": v["keyword"], "name": t(v["nameId"]), "category": v["categoryId"]} for k, v in table(dd, "characteristics").items()}
     out["characteristic_categories"] = {k: t(v["nameId"]) for k, v in table(dd, "characteristiccategories").items()}
     out["spells"] = {k: {"name": t(v["nameId"]), "desc": t(v["descriptionId"]), "levels": v["spellLevels"], "type": v["typeId"]} for k, v in table(dd, "spells").items()}
+    # fx: one row per effect [action id, element (0 neutral 1 earth 2 fire 3 water 4 air, -1 none), dice num, dice side, target mask, zone shape (ASCII
+    # code of the letter: 80 P point, 67 C circle, 88 X cross, 76 L line...), zone param 1, zone param 2, duration, value, delay]; effects of the critical hit are not kept
     out["spell_levels"] = {k: {"spell": v["spellId"], "grade": v["grade"], "ap": v["apCost"], "min_range": v["minRange"], "range": v["range"],
-                               "cooldown": v["minCastInterval"], "max_per_turn": v["maxCastPerTurn"]} for k, v in table(dd, "spelllevels").items()}
+                               "cooldown": v["minCastInterval"], "max_per_turn": v["maxCastPerTurn"], "per_target": v["maxCastPerTarget"],
+                               "crit": v["criticalHitProbability"], "init_cd": v["initialCooldown"], "min_level": v["minPlayerLevel"], "states": v["statesCriterion"],
+                               "fx": [[e["actionId"], e["effectElement"], e["diceNum"], e["diceSide"], e["targetMask"], e["zoneDescr"]["shape"], e["zoneDescr"]["param1"],
+                                       e["zoneDescr"]["param2"], e["duration"], e["value"], e["delay"]] for e in v["effects"]]}
+                              for k, v in table(dd, "spelllevels").items()}
     out["item_types"] = {k: t(v["nameId"]) for k, v in table(dd, "itemtypes").items()}
     out["items"] = {k: {"name": t(v["nameId"]), "type": v["typeId"], "level": v["level"], "weight": v.get("realWeight", 0)} for k, v in table(dd, "items").items()}
     out["interactives"] = {k: t(v["nameId"]) for k, v in table(dd, "interactives").items()}

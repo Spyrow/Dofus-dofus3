@@ -8,17 +8,21 @@ Flow observed (obfuscated names, see login.py):
                        jug {2: actor} -> jtd {1: 1} (every sequence boundary, mine or the monsters')
   end:                 jwp / jwh (results), then the exploration map is sent again (jow).
 Movement in a fight is restricted to the 4 diagonal directions (a straight step is refused with jpc -7).
-The AI is deliberately simple: cast the first affordable spell that reaches the nearest enemy, else walk toward it, then end the turn.
-Line of sight, cooldowns, summons, healing and enemy death are NOT modelled: an enemy that does not react to a cast is dropped from the
-target list, and the fight ends on jwp. Only meant for easy fights (see MAX_GROUP)."""
+The default engine is fightai.plan (spell effects, zones, resistances, positioning, kills; see that module); the simple engine (cast the first
+affordable spell that reaches the nearest enemy, else walk toward it) stays as the fallback when the planner cannot play a turn.
+The fight state is followed from the events: jsq actions 91..100 carry the damage ({37: {4: element, 5: target, 6: amount}}, source in 36) and 108 the
+heals ({39: {2: target, 4: amount}}), so the life of every fighter is exact. Summons and allies are told from the monsters by the master id of the
+fighter entry (3.4.10: 0 for a monster, the summoner for a summon)."""
 import threading, time
-import gamedata, gamemaps
+import gamedata, gamemaps, fightai
 from wire import parse, f_bytes, f_varint, enc_varint
 
 ACK_IDS = {3, 7, 8, 10, 12, 13, 15, 16, 17, 23, 59}   # jsy ids the real client acknowledged for its own actor
 MAX_GROUP = 3
 TURN_TIMEOUT = 60
 FIGHT_TIMEOUT = 600
+AI_ENABLED = True      # the planner of fightai.py; False (or any failure of it) plays with the simple engine below
+HIT_DEFAULT = 0.35     # damage one hit of an unknown monster is guessed to do, as a share of its life
 RESUME_IDLE_TIMEOUT = 20
 
 
@@ -68,13 +72,18 @@ def dist(a, b):
 
 
 class Fight:
+    HIT = {}      # monster template -> damage of one hit on me (moving average, learned from the damage events, kept across fights)
+    REACH = {}    # monster template -> distance its hits on me come from (see _track_life)
+    REACH_SEEN = {}
+
     def __init__(self, sess):
-        self.s = sess; self.reset()
+        self.s = sess; self.spell_score = {}; self.mem = fightai.Memory(); self.mem.reliability = self.spell_score; self.reset()
 
     def reset(self):
         self.started, self.over, self.my_turn, self.cast_evt = (threading.Event() for _ in range(4))
         self.jvj_me = False; self.dead = set(); self.casts = {}
         self.tpl, self.hp, self.pm, self.mutilated = {}, {}, {}, False      # fighter -> monster template / life / MP; Mutilation already cast this fight
+        self.master, self.res, self.hp_max, self.my_hp, self.turn_no = {}, {}, {}, None, 0; self.mem.new_fight()
         self.last_message_at = 0.0; self.ap_err = None      # ap_err: (AP I have, AP the spell needs, time) from the server's "not enough AP" answer
         if not hasattr(self, "cost"): self.cost = {}      # spell id -> the AP cost the server really asked (the data holds the first grade's), kept across fights
         if not hasattr(self, "spell_score"): self.spell_score = {}   # spell id -> [reactions, silences], kept across fights
@@ -105,6 +114,8 @@ class Fight:
         elif t == login.JTK: self.cast_evt.set()
         elif t == login.JSQ:   # jsq {22: action id, 3: {2: victim}} -- action 103 is a death (seen when the last cast killed the monster)
             self.cast_evt.set()
+            try: self._track_life(body)
+            except (ValueError, IndexError, KeyError, TypeError): pass
             if _vi(body, 22) == 5:   # slide / charge: {5: {1: actor, 2: previous cell, 3: new cell}} -- the monsters that charge end up next to us
                 sub = next((v for f, v in parse(body) if f == 5 and isinstance(v, bytes)), b"")
                 who, dest = s64(_vi(sub, 1)), _vi(sub, 3)
@@ -135,13 +146,55 @@ class Fight:
             if aid is None or aid == self.s.char_id: return
             tpl = sub(entry, 3, 4, 6, 3); stats = sub(entry, 3, 4, 7)
             if tpl: self.tpl[aid] = _vi(tpl, 3)
+            self.master[aid] = s64(_vi(sub(entry, 3, 4) or b"", 10)) or 0
             for f, v in parse(stats or b""):
                 if f != 4 or not isinstance(v, bytes): continue
                 sid = _vi(v, 2) or 0; val = _vi(sub(v, 3) or b"", 2)
                 if val is None: continue
-                if sid == 0: self.hp[aid] = val
+                if sid == 0: self.hp[aid] = val; self.hp_max[aid] = val
                 elif sid == 23: self.pm[aid] = val
+                elif sid in (33, 34, 35, 36, 37): self.res.setdefault(aid, {})[{37: 0, 33: 1, 34: 2, 35: 3, 36: 4}[sid]] = s64(val)
         except (ValueError, IndexError): pass
+
+    def _is_enemy(self, aid):
+        """A fighter is an enemy when its master chain ends on a monster: monsters and their summons (negative ids); my summons end on me."""
+        root = aid
+        for _ in range(5):
+            m = self.master.get(root, 0)
+            if not m: break
+            root = m
+        return root < 0
+
+    def _enemy_cells(self):
+        with self.s._lock: return {a: c for a, c in self.s.actors.items() if a != self.s.char_id and a not in self.dead and self._is_enemy(a)}
+
+    def _track_life(self, body):
+        """Follow the life of every fighter from the damage / heal events, and learn what the monsters do to me."""
+        act = _vi(body, 22); s = self.s
+        sub = lambda n: next((v for f, v in parse(body) if f == n and isinstance(v, bytes)), None)
+        if act in fightai.DMG_ACTION or act in fightai.STEAL_ACTION:
+            ev = sub(37)
+            if ev is None: return
+            tgt, amount, src = s64(_vi(ev, 5)), _vi(ev, 6) or 0, s64(_vi(body, 36))
+            if tgt == s.char_id:
+                if self.my_hp is not None: self.my_hp = max(0, self.my_hp - amount)
+                if src is not None and src != s.char_id and self._is_enemy(src):
+                    tpl = self.tpl.get(src); cells = dict(s.actors)
+                    if tpl is not None:
+                        old = Fight.HIT.get(tpl); Fight.HIT[tpl] = amount if old is None else 0.6 * old + 0.4 * amount
+                        if src in cells and s.my_cell is not None:      # the reach is the second farthest hit seen (one hit may come from a stale position)
+                            seen = Fight.REACH_SEEN.setdefault(tpl, []); seen.append(dist(cells[src], s.my_cell)); del seen[:-8]
+                            Fight.REACH[tpl] = min(8, sorted(seen, reverse=True)[1]) if len(seen) > 1 else 1
+            elif tgt in self.hp: self.hp[tgt] -= amount
+        elif act == fightai.HEAL_ACTION:
+            ev = sub(39)
+            if ev is None: return
+            tgt, amount = s64(_vi(ev, 2)), _vi(ev, 4) or 0
+            if tgt == s.char_id:
+                if self.my_hp is not None: self.my_hp = min(self.my_hp + amount, self._my_hp_max() or self.my_hp + amount)
+            elif tgt in self.hp: self.hp[tgt] = min(self.hp[tgt] + amount, self.hp_max.get(tgt, self.hp[tgt] + amount))
+
+    def _my_hp_max(self): return self.s.stats.get(0)
 
     def _later(self, delay, name, body):
         def go():
@@ -169,6 +222,7 @@ class Fight:
             if not self.my_turn.wait(1.0): continue
             self.my_turn.clear()
             time.sleep(0.8)   # the start-of-turn acknowledgements go out first
+            self.turn_no += 1
             if self.over.is_set(): break
             try: self._turn()
             except RuntimeError as e: say(f"tour interrompu : {e}")
@@ -263,7 +317,7 @@ class Fight:
         import login
         self.cast_evt.clear()
         self.s._send(login.JSR, f_varint(1, sp["id"]) + f_varint(2, cell)); say(f"{sp['name']} sur la case {cell}{note}")
-        ok = self.cast_evt.wait(3); self._score(sp["id"], ok)
+        ok, _left = self._wait_cast(sp); self._score(sp["id"], ok)
         if ok: time.sleep(1.3)
         return ok
 
@@ -271,7 +325,8 @@ class Fight:
         s = self.s; say = lambda m: s.log("action", "Combat : " + m)
         stase_casts = 0; skipped = set()
         for _ in range(12):
-            with s._lock: me = s.my_cell; enemies = {a: c for a, c in s.actors.items() if a < 0 and a not in self.dead}
+            with s._lock: me = s.my_cell
+            enemies = self._enemy_cells()
             if me is None or not enemies or self.over.is_set(): return
             m = s.mapdata(); boss = self._boss(enemies)
             blocked = {c for a, c in s.actors.items() if a != s.char_id}
@@ -296,12 +351,73 @@ class Fight:
                         self._move(best[2], say, "approche du boss à portée de Stase"); mp -= len(best[2]) - 1; continue
             break
         # 3. run away with the movement points left (the monsters have to come to us)
-        with s._lock: me = s.my_cell; enemies = {a: c for a, c in s.actors.items() if a < 0 and a not in self.dead}
+        with s._lock: me = s.my_cell
+        enemies = self._enemy_cells()
         if mp > 0 and me is not None and enemies and not self.over.is_set():
             m = s.mapdata(); boss = self._boss(enemies); blocked = {c for a, c in s.actors.items() if a != s.char_id}
             best = self._best_cell(me, mp, enemies, blocked, m, boss, (stase["min"], stase["max"]))
             if best and len(best[2]) > 1 and best[0][0] >= -self._threat(me, enemies):
                 self._move(best[2], say, f"fuite ({self._threat(me, enemies)} ennemi(s) à portée, {-best[0][0]} après la fuite)")
+
+    # ---- planner (fightai) ----
+    def _board(self, ap, mp):
+        s = self.s
+        with s._lock: me = s.my_cell; actors = dict(s.actors)
+        if me is None: return None
+        stats = dict(s.stats); hp_max = stats.get(0) or 0
+        if self.my_hp is None: self.my_hp = max(1, hp_max - abs(stats.get(97) or 0)) if hp_max else 1
+        enemies, allies = {}, {}
+        for a, c in actors.items():
+            if a == s.char_id or a in self.dead: continue
+            if not self._is_enemy(a): allies[a] = c; continue
+            tpl = self.tpl.get(a); hp0 = self.hp_max.get(a) or self.hp.get(a) or 30
+            hit = Fight.HIT.get(tpl, max(3.0, HIT_DEFAULT * hp0)) * 1.5
+            enemies[a] = fightai.Enemy(a, c, self.hp.get(a, hp0), hp0, self.res.get(a, {}), self.pm.get(a, 3), Fight.REACH.get(tpl, 1), hit)
+        return fightai.Board(s.mapdata(), me, ap, mp, self.my_hp, hp_max or self.my_hp, stats, enemies, allies, self.turn_no)
+
+    def _ai_spells(self):
+        out = []
+        for sid in self.s.spell_ids:
+            sp = fightai.load_spell(sid, self.s.level, self.cost.get(sid))
+            if sp: out.append(sp)
+        return out
+
+    def _turn_ai(self, ap, mp):
+        """Play one turn with the planner -> False when it cannot (no spell data), so that the simple engine plays the turn."""
+        s = self.s; say = lambda m: s.log("action", "Combat : " + m)
+        spells = self._ai_spells()
+        if not spells: return False
+        import login
+        mem = self.mem; mem.new_turn(); skipped = set(); moves = 0
+        for _ in range(20):
+            if self.over.is_set(): return True
+            board = self._board(ap, mp)
+            if board is None or not board.enemies: return True
+            plan = fightai.plan(board, spells, mem, skipped)
+            if plan is None: return True
+            if len(plan.dest_path) > 1 and moves < 3:
+                try: self._move(plan.dest_path, say, f"IA : position ({plan.note})")
+                except RuntimeError as e: say(f"IA : déplacement refusé ({e}), je joue sur place"); mp = 0; moves = 9; continue
+                mp -= len(plan.dest_path) - 1; moves += 1; continue
+            if plan.casts:
+                sp, cell = plan.casts[0]; d = {"id": sp.id, "name": sp.name, "ap": sp.ap}
+                victim = next((a for a, c in self._enemy_cells().items() if c == cell), None)
+                self.cast_evt.clear(); s._send(login.JSR, f_varint(1, sp.id) + f_varint(2, cell)); say(f"IA : {sp.name} sur la case {cell}" + (f" (ennemi {victim}, vie {self.hp.get(victim)})" if victim else ""))
+                ok, left = self._wait_cast(d)
+                if left is not None:      # the server's answer also corrected the cost of this spell (self.cost): use it for the rest of the turn
+                    ap = left; sp.ap = d["ap"]; say(f"pas assez de PA pour « {sp.name} » : il m'en reste {ap}"); continue
+                self._score(sp.id, ok)
+                if not ok: skipped.add((sp.id, cell)); say(f"pas de réaction à « {sp.name} » sur la case {cell} : écarté pour ce tour"); continue
+                ap -= sp.ap; mem.casts_turn[sp.id] = mem.casts_turn.get(sp.id, 0) + 1; mem.last_cast[sp.id] = self.turn_no
+                if victim: mem.target_casts[(sp.id, victim)] = mem.target_casts.get((sp.id, victim), 0) + 1
+                for f in sp.fx:
+                    if f.kind == "buff": mem.buff_until[sp.id] = self.turn_no + (f.duration if 0 < f.duration < 50 else 999)
+                time.sleep(1.3); continue
+            if len(plan.end_path) > 1 and moves < 5:
+                try: self._move(plan.end_path, say, "IA : repli / approche")
+                except RuntimeError as e: say(f"IA : déplacement refusé ({e})")
+            return True
+        return True
 
     def _turn(self):
         """One of my turns. A cast that gets no reaction only skips that target FOR THIS TURN (line of sight, a moved enemy...); an enemy
@@ -312,12 +428,18 @@ class Fight:
         spells = self._spells(); casts = {}; skipped = set(); moves_without_cast = 0
         say(f"mon tour ({ap} PA, {mp} PM)")
         mut, stase = self._kite_spells()
-        with s._lock: n_enemies = sum(1 for a in s.actors if a < 0 and a not in self.dead)
+        n_enemies = len(self._enemy_cells())
         if mut and stase and n_enemies >= self.KITE_MIN_ENEMIES:
             say(f"tactique du boss : {n_enemies} ennemis, Mutilation puis Stase à distance puis fuite")
             return self._kite_turn(ap, mp, mut, stase)
+        if AI_ENABLED:
+            try:
+                if self._turn_ai(ap, mp): return
+            except RuntimeError: raise
+            except Exception as e: say(f"IA avancée en échec ({e!r}) : repli sur l'IA simple")
         for _ in range(14):
-            with s._lock: me = s.my_cell; enemies = {a: c for a, c in s.actors.items() if a < 0 and a not in self.dead}
+            with s._lock: me = s.my_cell
+            enemies = self._enemy_cells()
             if me is None or not enemies or self.over.is_set(): return
             usable = [sp for sp in spells if sp["ap"] <= ap and (not sp["per_turn"] or casts.get(sp["id"], 0) < sp["per_turn"])]
             usable.sort(key=self._rank)   # spells that have reacted before come first; silent ones last
