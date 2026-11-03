@@ -2,7 +2,8 @@
 
   python webui/server.py [--port 8765]     then open http://127.0.0.1:8765
 
-Bound to 127.0.0.1 only; Host/Origin are checked (DNS-rebinding / CSRF). Tokens never leave the server:
+Bound to 127.0.0.1 only; Host/Origin are checked (DNS-rebinding / CSRF). Online: put an HTTPS proxy / tunnel in front, set the DOFUS_* variables
+of auth.py (admin login, public host) and every page and API call then needs the admin session. Tokens never leave the server:
 the API only returns labels and timestamps. Adding an account uses pkce_login (callback on port 9001, so
 close the Ankama launcher first, and only one login can run at a time).
 """
@@ -12,6 +13,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import accounts, boost, gamesession, groq, questbook
+sys.path.insert(0, HERE)
+import auth
 from pkce_login import login
 
 DEMO = {"id": "demo", "label": "Démo (données fictives)", "added": None, "refreshed": None, "snapshot": None, "demo": True}
@@ -51,12 +54,50 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(b))); self.send_header("Cache-Control", "no-store"); self.end_headers()
         self.wfile.write(b)
 
+    def _hosts(self):
+        port = self.server.server_port; pub = auth.public_host()
+        return {f"127.0.0.1:{port}", f"localhost:{port}"} | ({pub} if pub else set())
+
+    def _client(self):
+        """Address of the visitor: the proxy / tunnel runs on this machine, so its forwarding header is trusted only from a loopback peer."""
+        peer = self.client_address[0]
+        if peer in ("127.0.0.1", "::1"):
+            fwd = self.headers.get("CF-Connecting-IP") or (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+            if fwd: return fwd
+        return peer
+
+    def _redirect(self, where, cookie=None):
+        self.send_response(303); self.send_header("Location", where); self.send_header("Content-Length", "0")
+        if cookie: self.send_header("Set-Cookie", cookie)
+        self.end_headers()
+
+    def _cookie(self, value, max_age):
+        secure = "; Secure" if auth.public_host() else ""
+        return f"dofus_admin={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{secure}"
+
+    def _authed(self):
+        if not auth.enabled(): return True
+        jar = dict(kv.strip().split("=", 1) for kv in (self.headers.get("Cookie") or "").split(";") if "=" in kv)
+        return auth.valid_cookie(jar.get("dofus_admin"))
+
+    def _login_page(self, msg="", code=200):
+        b = (auth.LOGIN_PAGE % msg).encode()
+        self.send_response(code); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(b)))
+        self.send_header("Cache-Control", "no-store"); self.end_headers(); self.wfile.write(b)
+
     def _guard(self):
         host = self.headers.get("Host", "")
-        if host not in (f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"):
+        if host not in self._hosts():
             self._json({"error": "bad host"}, 403); return False
-        if self.command != "GET" and self.headers.get("Origin") not in (f"http://{host}",):
+        origins = {f"http://{host}", f"https://{host}"} if auth.public_host() and host == auth.public_host() else {f"http://{host}"}
+        if self.command != "GET" and self.headers.get("Origin") not in origins:
             self._json({"error": "bad origin"}, 403); return False
+        path = self.path.split("?")[0]
+        if path in ("/login", "/logout"): return True
+        if not self._authed():
+            if self.command == "GET" and path in ("/", "/index.html"): self._redirect("/login")
+            else: self._json({"error": "login required"}, 401)
+            return False
         return True
 
     def _events(self):
@@ -83,6 +124,10 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._guard(): return
         p = self.path.split("?")[0]
+        if p == "/login":
+            if not auth.enabled() or self._authed(): return self._redirect("/")
+            return self._login_page()
+        if p == "/logout": return self._redirect("/login", self._cookie("", 0))
         if p in ("/", "/index.html"):
             with open(os.path.join(HERE, "index.html"), "rb") as f: b = f.read()
             self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -136,7 +181,17 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self._guard(): return
-        p, body = self.path.split("?")[0], self._body()
+        p = self.path.split("?")[0]
+        if p == "/login":
+            if not auth.enabled(): return self._redirect("/")
+            addr = self._client()
+            if auth.throttled(addr): return self._login_page("Trop d'essais, réessayez dans quelques minutes.", 429)
+            n = min(int(self.headers.get("Content-Length") or 0), 4096)
+            form = {k: v[0] for k, v in parse_qs(self.rfile.read(n).decode("utf8", "replace")).items()}
+            if auth.check_login(addr, form.get("user"), form.get("password")): return self._redirect("/", self._cookie(auth.make_cookie(), auth.SESSION_SECONDS))
+            return self._login_page("Identifiant ou mot de passe incorrect.", 401)
+        if p == "/logout": return self._redirect("/login", self._cookie("", 0))
+        body = self._body()
         if p == "/api/login":
             with login_lock:
                 if login_state["status"] == "waiting": return self._json({"error": "login already in progress"}, 409)
@@ -251,9 +306,12 @@ class H(BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--host", default="127.0.0.1", help="bind address; keep 127.0.0.1 and let the HTTPS proxy / tunnel on this machine reach it")
     a = ap.parse_args()
-    srv = ThreadingHTTPServer(("127.0.0.1", a.port), H)
-    print(f"http://127.0.0.1:{a.port}", file=sys.stderr)
+    if a.host not in ("127.0.0.1", "localhost", "::1") and not auth.enabled(): sys.exit("refus : écouter hors de la machine exige DOFUS_ADMIN_PASSWORD_HASH (connexion admin)")
+    if auth.public_host() and not auth.enabled(): sys.exit("refus : DOFUS_PUBLIC_HOST est défini sans DOFUS_ADMIN_PASSWORD_HASH")
+    srv = ThreadingHTTPServer((a.host, a.port), H)
+    print(f"http://{a.host}:{a.port}" + (f" (public : https://{auth.public_host()}, connexion admin activée)" if auth.enabled() else ""), file=sys.stderr)
     try: srv.serve_forever()
     except KeyboardInterrupt: pass
 

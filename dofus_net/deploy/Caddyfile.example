@@ -1,0 +1,5 @@
+# Option A: Caddy gets the HTTPS certificate by itself (ports 80/443 open, DNS of bot.example.com pointing to the server)
+bot.example.com {
+	reverse_proxy 127.0.0.1:8765
+}
+# Option B: no open port, Cloudflare Tunnel instead:  cloudflared tunnel --url http://127.0.0.1:8765  (or a named tunnel on bot.example.com)

@@ -1,7 +1,7 @@
 """Persist the HAAPI key + refresh token OUTSIDE the repo (%APPDATA%/dofus_net/tokens.json, or ~/.dofus_net_tokens.json)."""
 import json, os
 
-PATH = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "dofus_net", "tokens.json")
+PATH = os.path.join(os.environ.get("DOFUS_NET_DATA") or os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "dofus_net"), "tokens.json")   # DOFUS_NET_DATA: data folder on a server
 
 def load():
     try:

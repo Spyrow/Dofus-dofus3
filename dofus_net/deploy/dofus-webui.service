@@ -1,0 +1,18 @@
+# /etc/systemd/system/dofus-webui.service   (sudo systemctl enable --now dofus-webui)
+[Unit]
+Description=Dofus bot web UI
+After=network-online.target
+
+[Service]
+User=dofus
+WorkingDirectory=/opt/dofus_net/client
+EnvironmentFile=/etc/dofus-webui.env
+ExecStart=/usr/bin/python3 webui/server.py --port 8765
+Restart=on-failure
+# the UI only listens on 127.0.0.1: the tunnel / proxy below is the only way in
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dofus_net
+
+[Install]
+WantedBy=multi-user.target
