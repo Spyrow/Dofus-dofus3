@@ -310,7 +310,10 @@ def main():
     a = ap.parse_args()
     if a.host not in ("127.0.0.1", "localhost", "::1") and not auth.enabled(): sys.exit("refus : écouter hors de la machine exige DOFUS_ADMIN_PASSWORD_HASH (connexion admin)")
     if auth.public_host() and not auth.enabled(): sys.exit("refus : DOFUS_PUBLIC_HOST est défini sans DOFUS_ADMIN_PASSWORD_HASH")
-    srv = ThreadingHTTPServer((a.host, a.port), H)
+    class Server(ThreadingHTTPServer):
+        allow_reuse_address = os.name != "nt"      # on Windows SO_REUSEADDR lets a second server share the port and an old instance keeps answering
+    try: srv = Server((a.host, a.port), H)
+    except OSError as e: sys.exit(f"port {a.port} déjà utilisé ({e}) : fermez l'ancienne interface (python server.py) avant d'en lancer une autre")
     print(f"http://{a.host}:{a.port}" + (f" (public : https://{auth.public_host()}, connexion admin activée)" if auth.enabled() else ""), file=sys.stderr)
     try: srv.serve_forever()
     except KeyboardInterrupt: pass
