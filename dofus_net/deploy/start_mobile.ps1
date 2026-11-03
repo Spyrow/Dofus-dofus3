@@ -23,6 +23,7 @@ if (-not (Test-Path $envFile)) {
 Get-Content $envFile | ForEach-Object { $k, $v = $_ -split "=", 2; Set-Item "env:$k" $v }
 $env:DOFUS_PUBLIC_HOST = $dns
 
-& $ts serve --bg --https=443 http://127.0.0.1:8765 | Out-Null
+Write-Host 'Publication sur Tailscale... (si un lien login.tailscale.com apparait, ouvrez-le pour activer Serve, puis relancez)'
+& $ts serve --bg --https=443 http://127.0.0.1:8765
 Write-Host "Interface : https://$dns/  (identifiant : $env:DOFUS_ADMIN_USER)  -- Ctrl+C pour arrêter"
 try { python (Join-Path $root "client\webui\server.py") --port 8765 } finally { & $ts serve reset | Out-Null }
