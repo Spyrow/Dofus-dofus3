@@ -22,6 +22,7 @@ MAX_GATHER_MAPS = 30
 MAX_HUNT_FIGHTS = 12                # fights allowed to collect one monster drop
 UNVALIDATED_FILE = "unvalidated_objectives.json"   # {objective id: text}: use objectives naming an element that is not on their map, never validated
 GATHER_FAILED_FILE = "gather_failed.json"   # {objective id: time}: crafts whose resource nobody found
+START_FAILED_FILE = "start_failed.json"      # per character: quests whose NPC did not start them, with the level at the time
 GATHER_RETRY_HOURS = 6
 RECONNECT_WINDOW = 1200            # seconds over which the reconnections are counted
 MAX_RECONNECTS = 5                  # reconnections after a dropped connection before the autopilot gives up
@@ -65,6 +66,9 @@ def blocked_edges():
 
 
 def block_edge(map_id, side):
+    try:
+        if gamemaps.exit_cells(gamemaps.load(int(map_id)), side): return      # the map data has exit cells there: the failure was circumstantial (stale position, a monster...), the border stays open
+    except Exception: pass
     with knowledge._lock:
         b = blocked_edges(); lst = b.setdefault(str(map_id), [])
         if side not in lst: lst.append(side); knowledge.save(BLOCKED_FILE, b)
@@ -189,7 +193,8 @@ class Autopilot:
             if self._incarnam_ids is None: self._incarnam_ids = set(questreport.area_quests("Incarnam"))
             with self.s._lock: act = set(self.s.quests)
             if act & self._incarnam_ids:       # every Incarnam quest first; the only exception: what is left is a fight left aside as too hard and nothing else can be done, the set comes first then
-                if not self._danger or self._pick()[0] is not None: return False
+                if not self._incarnam_retried and self._retry_incarnam(): return False      # what was given up on gets one more round first
+                if not self._danger or self._pick(any_world=True, only=self._incarnam_ids)[0] is not None: return False
             self._gear_skip.add(key)      # one attempt per run: when it ends early the Astrub quests go on
             have = lambda g: self.s.have(g) > 0 or g in self.s.equipped
             def wear():      # wear what dropped (after every fight: the pieces help in the next ones)
@@ -312,7 +317,14 @@ class Autopilot:
                         if self._dungeon_step(): continue
                         if self.quest_id is None and self._start_new_quests(incarnam_only=True): continue      # the Incarnam quests not begun yet come before anything else, the set included
                         if self._gear_farm(): continue
-                        obj, why = self._pick()
+                        obj = None
+                        if self.quest_id is None:      # the Incarnam quests still open come first, wherever the character is (the portal takes it back)
+                            import questreport
+                            if self._incarnam_ids is None: self._incarnam_ids = set(questreport.area_quests("Incarnam"))
+                            with self.s._lock: open_inc = bool(set(self.s.quests) & self._incarnam_ids)
+                            if open_inc: obj, why = self._pick(any_world=True, only=self._incarnam_ids)
+                        if obj is None: obj, why = self._pick()
+                        if obj is None and not self._incarnam_retried and self._retry_incarnam(): continue      # before any trip to another world
                         if obj is None: obj, why2 = self._pick(any_world=True); why = why if obj is None else why2       # nothing left here: the other world (back through the portal)
                         if obj is None and time.time() - self._last_sync > 20:   # the server does not push the next step by itself: ask for the fresh state, once in a while
                             self._last_sync = time.time()
@@ -327,7 +339,7 @@ class Autopilot:
                             if self.quest_id is None and self.llm and self.llm_steps < MAX_LLM_STEPS and self._ask_guide(why): continue
                             self.say("info", why); break
                         o = gamedata.quest_data('objectives', obj[1]) or {}
-                        tw = self._world(int(o["map"])) if o.get("map") else None
+                        tw = self._world(int(o["map"])) if o.get("map") else self._fight_world(o) if o.get("type") in FIGHT_TYPES else None
                         if tw and self.s.map_id and tw != self._world(self.s.map_id):          # the objective is in another world: take the portal first
                             if not self._change_world(tw):
                                 self.attempts[obj[1]] += 1; self.say("warn", f"impossible de rejoindre le monde « {tw} »"); time.sleep(1.0); continue
@@ -381,7 +393,7 @@ class Autopilot:
         mi = gamedata.map_info(map_id) if map_id else None
         return mi["world"] if mi else None
 
-    def _pick(self, any_world=False):
+    def _pick(self, any_world=False, only=None):
         """-> ((quest id, objective id), None) or (None, reason). Only objectives of the zone we are in (the starting zone, Astrub...); among
         them the closest one first (steps from the current map), so the walking is as short as possible."""
         unsupported = None; cands = []; self._stuck = []
@@ -394,6 +406,7 @@ class Autopilot:
         here = self._world(self.s.map_id); reach = distances(self.s.map_id) if self.s.map_id else {}
         for qid, (_step, objs) in quests.items():
             if self.quest_id is not None and qid != self.quest_id: continue
+            if only is not None and qid not in only: continue
             for oid, active in objs.items():
                 if not active: continue
                 o = gamedata.quest_data("objectives", oid) or {}
@@ -431,12 +444,22 @@ class Autopilot:
                         int(o["p"][0]) in {m for ms in self.s.groups.values() for m in ms} or gamedata.monster_maps(int(o["p"][0])) or o.get("map")):
                     tgt = int(o["map"]) if o.get("map") else 0
                     here_group = int(o["p"][0]) in {m for ms in self.s.groups.values() for m in ms}
+                    if not here_group and not tgt and self._fight_world(o) not in (None, here):      # the monster lives in another world (Astrub's cats from Incarnam)
+                        if any_world: cands.append((40, qid, oid))
+                        continue
                     cands.append((0 if here_group else reach.get(tgt, 12) if tgt else 12, qid, oid))
                 elif o.get("type") in FIGHT_TYPES: block(qid, oid, f"objectif « {text} » : aucun groupe de ce monstre sur la carte actuelle")
                 else: block(qid, oid, f"objectif « {text} » : type non géré")
         if cands:
             _d, qid, oid = min(cands); return (qid, oid), None
         return None, ("aucun objectif géré — " + unsupported) if unsupported else "aucune quête en cours"
+
+    def _fight_world(self, o):
+        """World where the monsters of a fight objective live when none of them is in the current world (None = here, or unknown)."""
+        here = self._world(self.s.map_id) if self.s.map_id else None
+        worlds = {self._world(m) for m in gamedata.monster_maps(int(o["p"][0]))} - {None}
+        if not worlds or here in worlds: return None
+        return sorted(worlds)[0]
 
     def _objective_location_maps(self, text, reach=None, broad=False):
         """Resolve a mapless free-text objective to reachable maps in its subarea or the current world."""
@@ -654,7 +677,7 @@ class Autopilot:
             cur = self.s.map_id; visited.add(cur)
             dist = distances(cur); cands = ({m for w in wanted for m in gamedata.monster_maps(w)} | set(self._objective_maps())) - visited
             reachable = sorted((dist[m], m) for m in cands if m in dist)
-            if not reachable: self.say("warn", "aucune carte accessible où ces monstres apparaissent"); return False
+            if not reachable: self.say("warn", "aucune carte accessible où ces monstres apparaissent"); self.attempts[oid] = FIGHT_ATTEMPTS; return False      # no point asking again from here
             nxt = reachable[0][1]
             self.say("info", f"aucun groupe adapté ici : recherche sur la carte {nxt} ({reachable[0][0]} étape(s))")
             if not self._travel(nxt):
@@ -862,14 +885,41 @@ class Autopilot:
         self.explore = 0
         return False
 
+    def _fetch_quest_item(self, qid, oid):
+        """The guide says the quest item of an objective is bought ("achetez lui une limonade ... Vous obtenez alors une Limonade d'Incarnam dans votre
+        inventaire de quête"): buy it from the NPC it names. -> the item's uid in the bag, or None."""
+        uid = self.s.item_for_objective(oid)
+        if uid is not None: return uid
+        g = dpln.find((gamedata.quest_data("quests", qid) or {}).get("name")); name = None
+        for step in (g or {}).get("steps") or []:
+            m = re.search(r"obtenez (?:alors )?(?:une?|du|de la|des|d')\s*([A-ZÉÈ][\w' ]+?) dans votre inventaire de qu", step)
+            if m: name = m.group(1).strip(); break
+        if not name: return None
+        want = gamejobs.norm(name)
+        iid = next((int(i) for i, it in gamedata.data().get("items", {}).items() if gamejobs.norm((it if isinstance(it, dict) else {}).get("name") or "") == want), None)
+        if iid is None: return None
+        if self.s.have(iid) <= 0:
+            self.say("info", f"objectif : l'objet de quête « {name} » s'achète : je vais le chercher")
+            if not self._buy_item(iid, 1, qid): return None
+        return self.s.item_for_objective(oid)
+
     def _use_objective(self, qid, oid, target):
         text = gamequests.objective_text(oid); self.goal = f"{text} (carte {target})"
         self.attempts[oid] += 1
         self.say("info", f"objectif : {self.goal} — essai {self.attempts[oid]}/{FREE_ATTEMPTS}")
         if re.match(r"\s*(escort|accompagn|guider|conduire)", text.lower()) and self._start_escort(qid, oid, text, target): pass
+        item_uid = self._fetch_quest_item(qid, oid) if self._alive() else None
         if self.s.map_id != target and route(self.s.map_id, target) is None and not self._discover(target): return False
         if not self._travel(target): return False
         time.sleep(2.0)
+        done = lambda: not self.s.quests.get(qid, (None, {}))[1].get(oid, False)
+        if item_uid is not None:      # the quest item of the objective, used on the spot (the element it is meant for is not in the map data)
+            self.say("info", "j'utilise l'objet de quête de l'objectif")
+            try: self._act("Utiliser l'objet de quête", lambda: self.s._do_use_item(item_uid))
+            except RuntimeError as e: self.say("warn", f"objet de quête inutilisable : {e}")
+            t0 = time.time()
+            while self._alive() and time.time() - t0 < 4 and not done(): time.sleep(0.4)
+            if done(): self.say("info", "objectif accompli"); return True
         if re.match(r"\s*(parler|discuter|retourner|aller voir|escort|accompagn|guider|conduire)", text.lower()):       # free-text "talk to ..." objective (an escort ends with a talk to the chief): the NPC is named in the text
             if self._talk_npcs(qid, oid, text) or self._follow_guide_npcs(qid, oid): return True
             self.say("warn", "objectif non validé après avoir parlé aux PNJ de la carte"); return self.attempts[oid] < FREE_ATTEMPTS
@@ -1070,6 +1120,7 @@ class Autopilot:
             hit = [n for n in names if re.search(r"(?<![a-z0-9])" + re.escape(n) + r"s?(?![a-z0-9])", sn)]
             for n in hit:
                 if not any(n != m and n in m for m in hit): out |= names[n]      # "tofu" inside "tofu chimerique" is the same monster
+                if len(n) >= 6 and not any(n != m and n in m for m in hit): out |= {i for nm, ids in names.items() if nm[:5] == n[:5] for i in ids}      # Incarnam's variants (Bouftou Nuageux, Boufton Pâlichon, Bouftor Éthéré)
         if not out and sentences:       # only a zone is named ("dans la Forêt d'Incarnam"): the monsters of that zone
             D = gamedata.data(); area = (gamedata.map_info(self.s.map_id) or {}).get("area") if getattr(self, "s", None) and self.s.map_id else "Incarnam"
             area_ids = {k for k, v in D.get("areas", {}).items() if v[0] == area}
@@ -1091,7 +1142,7 @@ class Autopilot:
         if not maps: self.say("warn", f"{npc} (qui vend {name}) est hors de portée"); return False
         tgt = min(maps, key=lambda m: reach.get(m, 0))
         self.say("info", f"achat : {name} ({self.s.have(item_id)}/{need}) chez {npc} (carte {tgt})"); self.goal = f"acheter {need} {name}"
-        self._prefer_words = {gamejobs.norm(name)}
+        self._prefer_words = {gamejobs.norm(name)} | ({gamejobs.norm(name).split()[0]} if len(gamejobs.norm(name).split()[0]) >= 5 else set())
         try:
             for _ in range(need - self.s.have(item_id) + 2):
                 if not self._alive() or self.s.have(item_id) >= need: break
@@ -1271,6 +1322,7 @@ class Autopilot:
         if not incarnam_only: todo.update(questreport.area_quests(info["area"]))
         for qid, q in sorted(todo.items(), key=lambda kv: (kv[0] not in questreport.area_quests("Incarnam"), kv[1]["level"] or 0, kv[0])):
             if qid in done or qid in active or qid in self._start_tried or str(qid) in knowledge.load("quests_ignored.json", {}): continue
+            if (self.s.level or 0) <= knowledge.load(self._kf(START_FAILED_FILE), {}).get(str(qid), -99) + 4: continue      # the NPC did not start it (a condition is missing): not again before the character has grown a few levels
             if self.s.level and q["level"] and q["level"] > self.s.level + 4: continue      # too hard for now: the list is sorted by level, the next ones are even harder
             self._start_tried.add(qid)
             offer = knowledge.load("quest_starters.json", {}).get(str(qid))
@@ -1293,15 +1345,22 @@ class Autopilot:
                 if not self._alive(): self._start_tried.discard(qid); return False      # the connection dropped: not the quest's fault, and the next ones would fail the same way
                 continue
             actor = self._find_npc(ids[0]) if len(ids) == 1 else next((a for i in ids for a in [self._find_npc(i)] if a is not None), None)
-            if actor is None: self.say("warn", f"{npc} introuvable sur la carte {tgt}"); continue
+            def failed():
+                with knowledge._lock:
+                    d = knowledge.load(self._kf(START_FAILED_FILE), {}); d[str(qid)] = self.s.level or 0; knowledge.save(self._kf(START_FAILED_FILE), d)
+            if actor is None: self.say("warn", f"{npc} introuvable sur la carte {tgt}"); failed(); continue
             try: self._act(f"Parler au PNJ {actor}", lambda: self.s._do_talk(actor))
-            except RuntimeError as e: self.say("warn", f"dialogue impossible : {e}"); continue
+            except RuntimeError as e:
+                self.say("warn", f"dialogue impossible : {e}")
+                if self._alive(): failed()
+                continue
             self._dialog(); time.sleep(2.0)
             try: self.s.sync_quests()
             except Exception: pass
             with self.s._lock: started = qid in self.s.quests or qid in self.s.finished_quests
             if started: self._new_quests += 1; self.say("event", f"quête « {q['name']} » démarrée"); return True
             self.say("warn", f"« {q['name']} » n'a pas démarré après le dialogue avec {npc}")
+            failed()
         return False
 
     def _find_npc(self, npc_id):

@@ -15,7 +15,7 @@ from haapi import create_game_token, GAME_IDS
 QUEST_MSGS = {login.ICA, login.ICJ, login.ICB, login.IBG, login.ILX, login.ILF, login.KIS}
 FIGHT_MSGS = {login.JUO, login.JWJ, login.JVJ, login.JTE, login.JUG, login.JSY, login.JTK, login.JSQ, login.JXI, login.JWP}   # JWP was missing: the fight engine never saw the end of a fight
 JOB_MSGS = gamejobs.MESSAGES | {gamestate.IRL, gamestate.IQX}   # harvest / craft / inventory / job experience (see gamejobs.py)
-KEEP = {login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP} | QUEST_MSGS | FIGHT_MSGS | JOB_MSGS | {gamestate.KSC, gamestate.KRG, gamestate.IRL, gamestate.IQX, gamestate.IPE, gamestate.ISM, gamestate.JOW}
+KEEP = {login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP} | QUEST_MSGS | FIGHT_MSGS | JOB_MSGS | {"lof", gamestate.KSC, gamestate.KRG, gamestate.IRL, gamestate.IQX, gamestate.IPE, gamestate.ISM, gamestate.JOW}
 RECONNECT_PAUSES = (3, 15, 30, 60, 120, 180, 240, 300)
 MAX_SUPERVISED_FAILURES = 5     # failed automatic reconnections (each one already waits through RECONNECT_PAUSES) before giving up
 SUPERVISOR_RETRY = 600          # seconds between two automatic reconnection rounds
@@ -99,6 +99,7 @@ class Session:
         if t in FIGHT_MSGS:
             self.fight.on_message(t, body)
             self.in_fight = t != login.JWP
+        elif t == "lof" and self.in_fight: self.fight.on_message(t, body)      # a cast refused (not enough AP...); the message is also sent outside fights, where it must not mean "in a fight"
         if t == gamestate.KRG:
             try: self.stats = gamestate.characteristics(body); self.base.update(gamestate.base_characteristics(body))
             except (ValueError, IndexError): pass
@@ -216,7 +217,19 @@ class Session:
             if tpl: self.npcs[aid] = tpl
             elif aid < 0 and not self.in_fight:
                 mons = fightbot.monster_group(entry)
-                if mons: self.groups[aid] = mons
+                if mons:
+                    self.groups[aid] = mons
+                    if self.map_id: self._note_monsters(mons)
+
+    def _note_monsters(self, mons):
+        """Remember where each monster was seen (knowledge/monster_seen.json): the zone data lacks some of them (Incarnam's Bouftou)."""
+        mid = int(self.map_id)
+        with knowledge._lock:
+            d = knowledge.load("monster_seen.json", {}); changed = False
+            for m in set(mons):
+                lst = d.setdefault(str(m), [])
+                if mid not in lst: lst.append(mid); changed = True
+            if changed: knowledge.save("monster_seen.json", d)
 
     # ---- jobs: inventory, harvest, craft (messages: gamejobs.py) ----
     def have(self, item_id):
@@ -248,7 +261,7 @@ class Session:
             e = gamejobs._sub(body, 1); el, cell, state = gamejobs._int(e, 3), gamejobs._int(e, 4), gamejobs._int(e, 5)
             with self._lock:
                 if el in self.elements and cell is not None: self.elements[el]["cell"] = cell
-            if cell is not None and el is not None and self.map_id:
+            if cell is not None and el is not None and self.map_id and el in self.elements:      # only the elements of the map we are on (an itw can arrive just after a map change)
                 with knowledge._lock:
                     d = knowledge.load("element_cells.json", {}); m = d.setdefault(str(self.map_id), {})
                     if m.get(str(el)) != cell: m[str(el)] = cell; knowledge.save("element_cells.json", d)
@@ -307,8 +320,8 @@ class Session:
         if not e or not e.get("skill"): raise RuntimeError("ressource introuvable sur la carte")
         mid = self.map_id; known = True
         cell = e.get("cell")
+        if cell is None: cell = gamemaps.element_cells(mid).get(element)      # the map data first: the learned file once recorded cells under the wrong map
         if cell is None: cell = knowledge.load("element_cells.json", {}).get(str(mid), {}).get(str(element))      # told by the server on an earlier harvest
-        if cell is None: cell = gamemaps.element_cells(mid).get(element)
         if cell is None:        # trees have no cell in the map data: estimate it from the sprite position (exact for the animated elements measured)
             pos = gamemaps.element_positions(mid).get(element)
             if pos is None: raise RuntimeError("case de la ressource inconnue")
@@ -344,6 +357,7 @@ class Session:
             got = []
             for ts, t, b in list(self.recent):
                 if ts >= t0 and t in (gamejobs.ITW, gamejobs.ITX if hasattr(gamejobs, "ITX") else "itx"): got.append(f"{t}(élément {about(t, b)})")
+                elif ts >= t0 and t not in ("knb", "jnz", "jns", None): got.append(f"{t}[{b.hex()[:40]}]")      # an error answer ("lof": no tool, level...) shows up here
             self.log("warn", f"récolte muette : élément {element} compétence {e['skill']} type {e.get('type')} cellule {cell} ; réponses : " + (", ".join(got[:6]) or "aucune"))
             raise RuntimeError(f"la ressource ne répond depuis aucune des {len(stands)} cases essayées")
         if not self._harvest_end.wait(15): raise RuntimeError("fin de récolte non reçue")
@@ -1227,7 +1241,7 @@ class Session:
                 self.recent.append((time.time(), t, body)); self.trace("S", t, body)
                 if t not in KEEP: return
                 self._on_map_message(t, body)
-                if t in (login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP) or t in QUEST_MSGS or t in FIGHT_MSGS: return
+                if t in (login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP) or t in QUEST_MSGS or t in FIGHT_MSGS or t == "lof": return
                 if t in gamejobs.MESSAGES:
                     if t != gamejobs.IPZ: return
                     job = (gamejobs.job_xp(body) or {}).get("job")

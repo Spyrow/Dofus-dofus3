@@ -13,5 +13,12 @@
    "portail"
   ],
   "note": "Route des âmes [4,-3]: Maître Anemo (« partir explorer le Monde des Douze », « S'approcher du portail ») puis le Portail vers Astrub -> Temple des Douze"
+ },
+ {
+  "from": "Monde des Douze",
+  "to": "Zone de départ",
+  "map": 153880835,
+  "talk": [],
+  "note": "retour à Incarnam : la porte apprise de la carte 192416776 (Cité d'Astrub [6,-19]) mène à la Route des âmes [4,-3]; on y marche simplement"
  }
 ]

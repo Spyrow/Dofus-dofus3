@@ -136,8 +136,9 @@ def seller(item_name, quest_name):
     if not g or not item: return None
     steps = [gamejobs.norm(s) for s in (g.get("steps") or [])]
     gamedata.quest_data("npcs", 0)
+    first = item.split()[0] if item.split() and len(item.split()[0]) >= 5 else None      # "Limonade d'Incarnam" is "une limonade" in the guide
     for i, sn in enumerate(steps):
-        if not gamejobs.mentions(item, sn) or not re.search(r"achet|vend", sn): continue
+        if not (gamejobs.mentions(item, sn) or (first and gamejobs.mentions(first, sn))) or not re.search(r"achet|vend", sn): continue
         text = " ".join(steps[max(0, i - 1):i + 2]); best = None
         for nid, nm in (gamedata._quest or {}).get("npcs", {}).items():
             n = gamejobs.norm(nm)

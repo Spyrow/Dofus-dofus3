@@ -62,7 +62,8 @@ def connection_step(token, device_hash, server_id=SERVER_ID):
     if _field(r, 2) is None: raise SystemExit("connection server refused the auth step (device hash / token?)")
     c.send(f_bytes(1, f_bytes(1, "1") + f_bytes(4, f_varint(1, server_id))))   # request id "1"
     r = _field(c.recv_frame(), 2) or sys.exit("no server-selection reply")
-    sel = _field(_field(r, 4) or sys.exit("no ticket in reply"), 1)
+    sel = _field(_field(r, 4) or sys.exit("le serveur n'a pas donné de ticket (serveur en maintenance, complet, ou personnage déjà connecté ailleurs ?)"), 1)
+    if sel is None: sys.exit("le serveur n'a pas donné de ticket (serveur en maintenance, complet, ou personnage déjà connecté ailleurs ?)")
     ticket, host = _field(sel, 1).decode(), _field(sel, 2).decode()
     c.s.close()
     return ticket, host

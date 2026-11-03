@@ -74,7 +74,8 @@ def monster_maps(monster_id):
     out = []
     for sid, mons in data().get("subarea_monsters", {}).items():
         if int(monster_id) in mons: out += data().get("subarea_maps", {}).get(sid, [])
-    return out
+    import knowledge      # plus the maps where the bot saw it itself (the zone data lacks some, e.g. Incarnam's Bouftou)
+    return out + [m for m in knowledge.load("monster_seen.json", {}).get(str(int(monster_id)), []) if m not in out]
 
 
 def effect_text(effect_id, value):
