@@ -5,7 +5,8 @@
 Data comes from <game>/Dofus_Data/StreamingAssets/Content: Data/*.asset.bundle (one table per file, MonoBehaviour with
 managed references) and I18n/<lang>.bin (u8 len + lang, u32 count, count x (u32 id, u32 offset), strings = varint length +
 UTF-8). Output: %APPDATA%/dofus_net/gamedata.json (outside the repo: derived from the game's files). Tables:
-characteristics, spells, spell_levels, items, item_types, jobs, breeds, effects. Re-run after each game update."""
+characteristics, spells, spell_levels, items, item_types, jobs, breeds, effects, challenges. Re-run after each game update.
+`--only-challenges` adds (or refreshes) just the challenges table of an existing gamedata.json."""
 import argparse, json, os, struct, sys, warnings
 warnings.filterwarnings("ignore")
 import UnityPy
@@ -44,10 +45,18 @@ def table(data_dir, name):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--game"); ap.add_argument("--lang", default="fr")
+    ap.add_argument("--only-challenges", action="store_true", help="merge the challenges table into the existing gamedata.json, rebuild nothing else")
     a = ap.parse_args()
     game = a.game or next((g for g in GAME_DIRS if os.path.isdir(g)), None) or sys.exit("game folder not found: use --game")
     content = os.path.join(game, "Dofus_Data", "StreamingAssets", "Content")
     t = I18n(os.path.join(content, "I18n", a.lang + ".bin")); dd = os.path.join(content, "Data")
+    if a.only_challenges:
+        try:
+            with open(OUT, encoding="utf-8") as f: out = json.load(f)
+        except (OSError, ValueError): sys.exit(f"{OUT} missing or unreadable: run without --only-challenges first")
+        out["challenges"] = export_challenges(dd, t)
+        with open(OUT, "w", encoding="utf-8") as f: json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+        print(len(out["challenges"]), "challenges ->", OUT); return
     out = {"lang": a.lang}
     out["characteristics"] = {k: {"keyword": v["keyword"], "name": t(v["nameId"]), "category": v["categoryId"]} for k, v in table(dd, "characteristics").items()}
     out["characteristic_categories"] = {k: t(v["nameId"]) for k, v in table(dd, "characteristiccategories").items()}
@@ -78,10 +87,19 @@ def main():
     out["subarea_monsters"] = {k: v["monsters"] for k, v in sub_tab.items() if v.get("monsters")}   # subarea id -> monster ids living there
     out["subarea_maps"] = {k: v["mapIds"] for k, v in sub_tab.items() if v.get("monsters")}
     out["superareas"] = {k: t(v["nameId"]) for k, v in table(dd, "superareas").items()}
+    out["challenges"] = export_challenges(dd, t)
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f: json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
     print({k: len(v) for k, v in out.items() if isinstance(v, dict)}, "->", OUT)
     export_quests(dd, t)
+
+
+def export_challenges(dd, t):
+    """Fight challenges ("défis"): id -> [name, description, category, completion criterion, activation criterion, target monster id].
+    The row id is what the server sends. Category 1 is the generic pool (Zombie, Statue, Hardi...); 3 / 9 / 4 / 17 are per-monster or per-zone variants
+    (dungeon bosses: Duo, Trio, scripted ones with the criterion `Ma=1`). The criterion strings are the game's own mini-language (see client/challenges.py)."""
+    return {k: [t(v["nameId"]), t(v["descriptionId"]), v["categoryId"], v["completionCriterion"], v["activationCriterion"], v["targetMonsterId"]]
+            for k, v in table(dd, "challenges").items()}
 
 
 def export_quests(dd, t):

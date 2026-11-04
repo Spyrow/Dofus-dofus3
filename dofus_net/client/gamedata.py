@@ -19,6 +19,12 @@ def data():
 _quest = None
 
 
+def quest_table(table):
+    """A whole table of questdata.json ({id as str: entry})."""
+    quest_data(table, 0)
+    return (_quest or {}).get(table, {})
+
+
 def quest_data(table, key):
     """Lookup in questdata.json (quests, steps, objectives, npcs, monsters, replies, messages, objective_types)."""
     global _quest

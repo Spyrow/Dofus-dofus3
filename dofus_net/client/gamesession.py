@@ -7,17 +7,20 @@ closed (a second session on the same account kicks the first, in both directions
 
 Chat: the chat messages are NOT decoded yet (none in the captures so far): `Session.chat` stays empty until gamestate
 learns the message; see add_chat()."""
-import collections, json, os, re, threading, time
-import boost, knowledge, accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, gamejobs, gameachievements, autopilot, fightbot, questbook, login
+import collections, json, os, random, re, threading, time
+import boost, market, knowledge, accounts, shield, gamestate, gamedata, gamemaps, gamequests, gamedoors, gamejobs, gameachievements, autopilot, fightbot, questbook, login, challenges
 from wire import parse, dec_varint, enc_varint, f_bytes, f_varint, request
 from haapi import create_game_token, GAME_IDS
+
+FISHING_JOB = 36        # job id of the fisherman (the goujon spots)
+FISH_START_WAIT, FISH_END_WAIT = 12, 45      # seconds to wait for a fishing spot to start / finish (a normal harvest answers within 3 s and ends in 15)
 
 QUEST_MSGS = {login.ICA, login.ICJ, login.ICB, login.IBG, login.ILX, login.ILF, login.KIS}
 FIGHT_MSGS = {login.JUO, login.JWJ, login.JVJ, login.JTE, login.JUG, login.JSY, login.JTK, login.JSQ, login.JXI, login.JWP}   # JWP was missing: the fight engine never saw the end of a fight
 JOB_MSGS = gamejobs.MESSAGES | {gamestate.IRL, gamestate.IQX}   # harvest / craft / inventory / job experience (see gamejobs.py)
 KEEP = {login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP} | QUEST_MSGS | FIGHT_MSGS | JOB_MSGS | {"lof", gamestate.KSC, gamestate.KRG, gamestate.IRL, gamestate.IQX, gamestate.IPE, gamestate.ISM, gamestate.JOW}
-RECONNECT_PAUSES = (3, 15, 30, 60, 120, 180, 240, 300)
-MAX_SUPERVISED_FAILURES = 5     # failed automatic reconnections (each one already waits through RECONNECT_PAUSES) before giving up
+RECONNECT_PAUSES = (3, 15, 30, 60, 120, 180, 240, 300, 420, 600)
+MAX_SUPERVISED_FAILURES = 8     # failed automatic reconnections (each one already waits through RECONNECT_PAUSES) before giving up
 SUPERVISOR_RETRY = 600          # seconds between two automatic reconnection rounds
 HEARTBEAT = 5          # seconds, same cadence as the real client's kne
 CONNECT_TIMEOUT = 45   # seconds without any character data before giving up
@@ -35,17 +38,18 @@ class Session:
         self.create_cfg = None      # set to login.DEFAULT_CREATE (or a variant): the next connection creates a character first (once)
         self.status, self.error, self.since = "disconnected", None, None
         self.seq = 0
-        self.journal = collections.deque(maxlen=800)
+        self.journal = collections.deque(maxlen=800); self._sent_tail = collections.deque(maxlen=16)
         self.chat = collections.deque(maxlen=400)
         self.character = self.map = None
         # current map state (reset on every jow): map id, our cell, other actors {id: cell}, our actor id
         self.map_id = self.my_cell = self.char_id = None; self.actors = {}; self.conn = None
         self.groups = {}; self.stats = {}; self.base = {}; self.spell_ids = []; self.fight = fightbot.Fight(self)   # monster groups {actor: [monster ids]}
         self.elements = {}   # interactive elements of the current map (from jnj)
-        self.in_fight = False; self.auto = autopilot.Autopilot(self)
+        self.in_fight = False; self._hp_obs = None; self.auto = autopilot.Autopilot(self)
         self.breed_id = None; self._krg_event = threading.Event(); self._boosting = False
         self._map_changed_at = 0.0   # time of the last jow
         self._trace = None   # list of (time, 'S'|'C', message, hex) while a fight is being recorded (see _do_attack)
+        self.fight_ctx = None   # challenges.Context: what the next fight is for (set by the autopilot just before it attacks, consumed by the fight)
         self._icj_events = {}; self._dlg = None; self._done = collections.deque(maxlen=60)   # dialog being recorded; (time, quest, objective) accomplished lately
         self._probe_reset = set(); self.level = None; self.finished_quests = set(); self.npcs = {}; self.quests = {}; self.dialog = None   # actor id -> template id; quest id -> (step, objectives); open dialog
         self._dialog_event = threading.Event(); self.recent = collections.deque(maxlen=200)   # (time, message type) of everything received
@@ -53,7 +57,7 @@ class Session:
         self._stop = threading.Event(); self._thread = None; self._lock = threading.RLock()
         self.keep_alive = False; self.resume_auto = None; self._supervisor = None   # supervisor: reconnects after a crash; resume_auto: autopilot arguments to restart with
         self.equipped = set()   # item ids worn (login inventory, then iqn)
-        self._equip_evt = threading.Event(); self._equip_want = None; self.achievements = {}; self._claimed = []; self._claimed_evt = threading.Event()
+        self._equip_evt = threading.Event(); self._equip_want = None; self.achievements = {}; self.achievements_account = {}; self.claimed_all = set(); self._claimed = []; self._claimed_evt = threading.Event()
         self.arrival_cell = None   # first cell on the current map: the door we came through is next to it
         self.arrival_inside = False   # True when we came in through a door / trigger cell (not across a border): only then is the arrival cell next to a door
         self._last = {}            # what the client last sent: {"jok": (time, map, last cell), "itz": (time, map, skill, element, stand), "joc": time, "hms": time}
@@ -63,6 +67,10 @@ class Session:
 
     # ---- journal / chat ----
     def log(self, level, text):
+        if text.startswith("Connexion fermée") and self._sent_tail:      # what we sent just before the server hung up: tells which request it did not like
+            now = time.time(); text += " ; dernières requêtes envoyées : " + ", ".join(f"{n}(-{now - t:.0f}s)" for t, n in list(self._sent_tail)[-8:])
+            try: text += " ; derniers messages reçus : " + ", ".join(f"{ty}(-{now - ts:.1f}s)" for ts, ty, _b in list(self.recent)[-10:])
+            except Exception: pass
         with self._lock:
             self.seq += 1
             self.journal.append({"n": self.seq, "t": time.time(), "level": level, "msg": text})
@@ -84,8 +92,13 @@ class Session:
         maximum, the load is the weight of the inventory stacks."""
         if self.status != "connected": return None
         hp_max = self.stats.get(0); lost = abs(self.stats.get(97) or 0)
+        raw = max(0, hp_max - lost) if hp_max else None
+        if raw is not None:
+            now = time.monotonic()
+            if self._hp_obs is None or self._hp_obs[0] != raw: self._hp_obs = (raw, now)      # a fresh value (login, end of a fight): restart the regeneration estimate from it
+            est = raw if self.in_fight else min(hp_max, raw + int((now - self._hp_obs[1]) / autopilot.REGEN_SECONDS))
         load = sum(q * ((gamedata.get("items", g) or {}).get("weight") or 0) for g, q in self.inv.values())
-        return {"level": self.level, "hp": max(0, hp_max - lost) if hp_max else None, "hp_max": hp_max,
+        return {"level": self.level, "hp": est if raw is not None else None, "hp_max": hp_max,
                 "pods": load if self.inv else None, "pods_max": self.stats.get(40)}
 
     def view(self, since=0):
@@ -99,6 +112,18 @@ class Session:
         if t in FIGHT_MSGS:
             self.fight.on_message(t, body)
             self.in_fight = t != login.JWP
+            if t == login.JWP:      # count the monsters killed in this fight, per type (achievements ask for "killed at least once")
+                try:
+                    killed = [self.fight.tpl.get(f) for f in self.fight.dead if f in self.fight.tpl and f != self.char_id]
+                    if killed and self.char_id:
+                        with knowledge._lock:
+                            kf = f"kills_{self.char_id}.json"; kd = knowledge.load(kf, {})
+                            for tpl in killed: kd[str(tpl)] = kd.get(str(tpl), 0) + 1
+                            knowledge.save(kf, kd)
+                except Exception: pass
+            if t == login.JWP:      # the fight is over: the server does not push the life again, so take the one followed during the fight (else the old value stays and the bot thinks it is hurt or rested)
+                hp_now, hp_max = self.fight.my_hp, self.stats.get(0)
+                if hp_now is not None and hp_max: self.stats[97] = -max(0, hp_max - hp_now); self._hp_obs = None; self.log("info", f"vie après le combat : {max(0, min(hp_now, hp_max))}/{hp_max}")
         elif t == "lof" and self.in_fight: self.fight.on_message(t, body)      # a cast refused (not enough AP...); the message is also sent outside fights, where it must not mean "in a fight"
         if t == gamestate.KRG:
             try: self.stats = gamestate.characteristics(body); self.base.update(gamestate.base_characteristics(body))
@@ -112,6 +137,7 @@ class Session:
         elif t == gamestate.JOW:
             mid = next((v for f, v in parse(body) if f == 1 and isinstance(v, int)), None)
             self._map_changed_at = time.time()
+            self.fight.chal.open()
             with self._lock:
                 self._left_map = self.map_id
                 self.arrival_inside = False
@@ -135,6 +161,8 @@ class Session:
                 self._register_actor(v)
             if t == login.JNJ:
                 with self._lock: self.elements.update(gamedoors.elements(body))
+                try: self._census_resources()
+                except Exception as e: self.log("warn", f"recensement des ressources impossible : {e}")
                 for f, v in parse(body):      # field 2: the map's resources {3: element, 4: cell, 5: state}; state present (1 harvested, 2 being harvested) = nothing to take now
                     if f == 2 and isinstance(v, bytes):
                         r = dict(parse(v))
@@ -204,6 +232,15 @@ class Session:
                     self.actors[aid] = path[-1]
                     if aid == self.char_id: self.my_cell = path[-1]; self._moved.set()
 
+    def _census_resources(self):
+        """Remember which resource skills grow on this map (knowledge/map_resources.json {map id: [skill ids]}): the Trajet tab plans routes from it."""
+        sk = gamejobs.skills()
+        with self._lock: mid = self.map_id; here = sorted({v.get("type") for v in self.elements.values() if (sk.get(v.get("type")) or {}).get("item", -1) > 0})
+        if not mid or not here: return
+        with knowledge._lock:
+            d = knowledge.load("map_resources.json", {})
+            if d.get(str(mid)) != here: d[str(mid)] = here; knowledge.save("map_resources.json", d)
+
     def _register_actor(self, entry):
         e = dict(parse(entry)); aid = e.get(1)
         cell = next((c for f2, c in parse(e[2]) if f2 == 3 and isinstance(c, int)), None) if isinstance(e.get(2), bytes) else None
@@ -215,12 +252,24 @@ class Session:
                 first = self.my_cell is None; self.my_cell = cell
                 if first: self.arrival_cell = cell; self._note_arrival(cell)
             tpl = gamequests.npc_template(entry) if aid < 0 else None
-            if tpl: self.npcs[aid] = tpl
+            if tpl:
+                self.npcs[aid] = tpl
+                if self.map_id and "banquier" in gamejobs.norm(gamedata.quest_data("npcs", tpl)): self._note_bank(self.map_id)
             elif aid < 0 and not self.in_fight:
                 mons = fightbot.monster_group(entry)
                 if mons:
                     self.groups[aid] = mons
                     if self.map_id: self._note_monsters(mons)
+
+    def _note_bank(self, map_id):
+        """A banker stands on this map: remember it (knowledge/banks.json, list of map ids), the farm routes come back here to empty the bag."""
+        with knowledge._lock:
+            b = knowledge.load("banks.json", [])
+            if map_id not in b: b.append(map_id); knowledge.save("banks.json", b)
+
+    def bank_deposit(self):
+        """Put the resources of the bag into the bank (talk to the banker, move the stacks). NOT IMPLEMENTED: the messages of the bank window were never captured."""
+        raise RuntimeError("dépôt en banque impossible : les messages du coffre n'ont pas encore été capturés (voir GAME_PROTOCOL.md)")
 
     def _note_monsters(self, mons):
         """Remember where each monster was seen (knowledge/monster_seen.json): the zone data lacks some of them (Incarnam's Bouftou)."""
@@ -293,10 +342,13 @@ class Session:
                     else: self.equipped.add(gid)
             if self._equip_want == (uid, pos): self._equip_evt.set()
         elif t == "mdp":
-            self.achievements = {a: pending for a, pending in gameachievements.listing(body)}
-            self.log("event", f"Succès : {len(self.achievements)} débloqués, {sum(self.achievements.values())} avec une récompense à réclamer")
+            rows = gameachievements.listing(body)
+            self.achievements = {a: pending for a, pending, owner in rows if owner in (None, self.char_id)}      # this character's only
+            self.achievements_account = {}
+            for a, pending, owner in rows: self.achievements_account.setdefault(a, set()).add(owner)
+            self.log("event", f"Succès : {len(self.achievements)} débloqués par ce personnage ({len(self.achievements_account)} sur le compte), {sum(self.achievements.values())} avec une récompense à réclamer")
         elif t == "mdj":
-            a = _vi(body, 1); self._claimed.append(a); self._claimed_evt.set()
+            a = _vi(body, 1); self._claimed.append(a); self.claimed_all.add(a); self._claimed_evt.set()
             self.log("event", f"Succès validé : « {gameachievements.name(a)} »")
         elif t == gamejobs.JYZ: self._craft_skill = _vi(body, 1); self._craft_open.set()
         elif t == gamejobs.KCH: self._table_event.set()
@@ -340,6 +392,9 @@ class Session:
         stands = [c for _d, _l, c in sorted(stands)][:2 if known else 4]      # a resource that does not answer from two cells will not from five: fewer tries, less spam
         if not stands: raise RuntimeError("aucune case accessible à côté de l'élément")
         name = gamedata.get("interactives", e.get("interactive")) or "?"; t0 = time.time()
+        try: fishing = (gamejobs.skills().get(e.get("type")) or {}).get("job") == FISHING_JOB
+        except Exception: fishing = False
+        start_wait, end_wait = (FISH_START_WAIT, FISH_END_WAIT) if fishing else (3, 15)      # a fish takes its time to bite: do not give up on the spot after 3 s
         for n, stand in enumerate(stands):
             if self.my_cell != stand:
                 path, _ = self.plan(stand)
@@ -347,7 +402,7 @@ class Session:
             self._harvest_started.clear(); self._harvest_end.clear(); t0 = time.time()
             self._send(login.ITZ, f_varint(1, e["skill"]) + f_varint(3, element))
             self.log("action", f"→ itz : récolte de l'élément {element} « {name} » (compétence {e['skill']}) depuis la case {self.my_cell}, ressource en {cell}" + ("" if known else " (estimée)"))
-            if self._harvest_started.wait(3): break
+            if self._harvest_started.wait(start_wait): break
             self._unlock_after_use(self.my_cell)
         else:
             self.unavailable[element] = time.time() + 300      # silent: not harvestable by us (tool / level) or growing back
@@ -361,11 +416,69 @@ class Session:
                 elif ts >= t0 and t not in ("knb", "jnz", "jns", None): got.append(f"{t}[{b.hex()[:40]}]")      # an error answer ("lof": no tool, level...) shows up here
             self.log("warn", f"récolte muette : élément {element} compétence {e['skill']} type {e.get('type')} cellule {cell} ; réponses : " + (", ".join(got[:6]) or "aucune"))
             raise RuntimeError(f"la ressource ne répond depuis aucune des {len(stands)} cases essayées")
-        if not self._harvest_end.wait(15): raise RuntimeError("fin de récolte non reçue")
+        if not self._harvest_end.wait(end_wait): raise RuntimeError("fin de récolte non reçue")
         time.sleep(0.8)   # the loot (isz / irx) and the experience (ipz) arrive right after itt
 
     def harvest(self, element):
         return self.start_action(f"Récolter l'élément {element}", lambda: self._do_harvest(element))
+
+    def market_scan(self, ids=None, delay=1.0, max_age=6 * 3600):
+        """Ask the encyclopedia prices (iqp -> ire) of every resource, one request per `delay` s, into knowledge/market_prices.json.
+        Items fetched less than `max_age` s ago are skipped, so an interrupted scan resumes where it stopped."""
+        return self.start_action("Relever les prix du marché", lambda: self._do_market_scan(ids, delay, max_age))
+
+    def _market_todo(self, ids, max_age, db=None):
+        db = knowledge.load(market.FILE, {}) if db is None else db; now = time.time()
+        return [g for g in (ids or market.resource_ids()) if now - (db.get(str(g)) or {}).get("fetched", 0) > max_age]
+
+    def market_scan_auto(self, ids=None, delay=1.0, max_age=6 * 3600):
+        """market_scan that survives the game server cutting the connection (it does, after a variable number of requests): waits for the automatic
+        reconnection, pauses 30 s, and continues with what is left. Gives up after 15 interrupted rounds. -> error string or None."""
+        if self.status != "connected": return "personnage non connecté"
+        if getattr(self, "_market_thread", None) and self._market_thread.is_alive(): return "relevé déjà en cours"
+        def loop():
+            rounds = 0
+            while rounds < 15 and self._market_todo(ids, max_age):
+                if self.status != "connected": time.sleep(5); continue
+                if self.market_scan(ids, delay, max_age) is not None: time.sleep(5); continue      # an action is running
+                time.sleep(3)
+                while self.busy and self.status == "connected": time.sleep(2)
+                if self._market_todo(ids, max_age):
+                    rounds += 1; self.log("warn", f"Marché : relevé interrompu (tour {rounds}/15), reprise après la reconnexion")
+                    time.sleep(30)
+            self.log("info", "Marché : relevé automatique terminé" if not self._market_todo(ids, max_age) else "Marché : relevé automatique abandonné")
+        self._market_thread = threading.Thread(target=loop, daemon=True); self._market_thread.start()
+        return None
+
+    def _do_market_scan(self, ids, delay, max_age):
+        db = knowledge.load(market.FILE, {})
+        todo = self._market_todo(ids, max_age, db)
+        self.log("info", f"Marché : {len(todo)} objet(s) à relever (~{int(len(todo) * (delay + 0.3) / 60) + 1} min)")
+        done = misses = 0
+        for gid in todo:
+            if self._stop.is_set() or self.status != "connected": raise RuntimeError("connexion perdue ou arrêt demandé")
+            body = self._ask_price(gid)
+            if body is None:      # no answer: an item that cannot be sold at the HDV. Only a probe item (known to sell) failing too means the server stopped answering
+                db[str(gid)] = {"none": True, "fetched": int(time.time()), "name": (gamedata.get("items", gid) or {}).get("name")}
+                misses += 1
+                if misses >= 5:
+                    if self._ask_price(303) is None: knowledge.save(market.FILE, db); raise RuntimeError("le serveur ne répond plus aux demandes de prix (iqp), même pour un objet de contrôle : arrêt")
+                    misses = 0
+                continue
+            misses = 0; _g, summary = market.parse_ire(body)
+            db[str(gid)] = dict(summary, fetched=int(time.time()), name=(gamedata.get("items", gid) or {}).get("name"))
+            done += 1
+            if done % 20 == 0: knowledge.save(market.FILE, db); self.log("info", f"Marché : {done}/{len(todo)} relevés")
+            time.sleep(delay + random.random() * 0.15)
+        knowledge.save(market.FILE, db); self.log("info", f"Marché : {done} prix enregistrés ({len(db)} objets au total)")
+
+    def _ask_price(self, gid, wait=1.5):
+        """iqp for one item -> the bytes of the ire answer, or None when the server stays silent."""
+        t0 = time.time(); self._send(market.IQP, f_varint(1, gid)); body = None
+        while time.time() - t0 < wait and body is None:
+            body = next((b for ts, t, b in list(self.recent) if ts >= t0 and t == market.IRE), None)
+            if body is None: time.sleep(0.05)
+        return body
 
     def _do_equip(self, gid, position=1):
         """Wear an item: ito {1: 1, 2: uid, 3: position} (position 1 = the weapon slot, where the hunter's knife goes; the weapon already there goes
@@ -373,10 +486,12 @@ class Session:
         with self._lock: uid = next((u for u, (g, _q) in self.inv.items() if g == gid), None)
         if uid is None: raise RuntimeError(f"« {gamejobs.item_name(gid)} » n'est pas dans l'inventaire")
         if position == 1 and gid in self.equipped: self.log("info", f"« {gamejobs.item_name(gid)} » est déjà équipé"); return      # the server says nothing then
-        self._equip_evt.clear(); self._equip_want = (uid, position)
-        self._send(gamejobs.ITO, f_varint(1, 1) + f_varint(2, uid) + f_varint(3, position))
+        self._equip_evt.clear(); self._equip_want = (uid, position); t_ito = time.time()
+        self._send(gamejobs.ITO, f_varint(1, 1) + f_varint(2, uid) + (f_varint(3, position) if position else b""))      # like the real client: a zero (the amulet slot) is left out of the message
         self.log("action", f"→ ito : équiper « {gamejobs.item_name(gid)} » (objet {uid}, emplacement {position})")
-        if not self._equip_evt.wait(4): raise RuntimeError("l'équipement n'a pas été confirmé (iqn)")
+        if not self._equip_evt.wait(4):
+            got = [f"{t}[{b.hex()[:40]}]" for ts, t, b in list(self.recent) if ts >= t_ito and t not in ("knb", "jnz", "jns", None)]      # what the server answered instead of iqn
+            raise RuntimeError("l'équipement n'a pas été confirmé (iqn) ; objet " + str(uid) + ", emplacement " + str(position) + " ; réponses : " + (", ".join(got[:6]) or "aucune"))
         time.sleep(0.6)
 
     ITEM_OBJECTIVE_EFFECT = 30     # a quest item carries the objective it completes as effect 30 (value = objective id)
@@ -394,8 +509,8 @@ class Session:
     def use_item(self, uid):
         return self.start_action(f"Utiliser l'objet {uid}", lambda: self._do_use_item(int(uid)))
 
-    def equip(self, gid):
-        return self.start_action(f"Équiper l'objet {gid}", lambda: self._do_equip(int(gid)))
+    def equip(self, gid, position=1):
+        return self.start_action(f"Équiper l'objet {gid}", lambda: self._do_equip(int(gid), int(position)))
 
     def claim_achievements(self, wait=4.0):
         """Validate the achievements: mdw {1: -1} claims every reward waiting; the server answers mdj per achievement. -> number claimed."""
@@ -530,6 +645,15 @@ class Session:
                 "elements": [{"element": e["element"]} for e in mv.get("elements", [])], "sides": sides, "reachable_maps": list(targets)}
 
     # ---- capital points ----
+    def challenge_view(self):
+        """Settings, state of the request names and the last fights' challenges, for the web UI."""
+        names = challenges.Names(); st = self.fight.chal
+        return {"settings": challenges.settings(self.aid), "modes": list(challenges.MODES),
+                "requests_known": names.ok("bonus", "mod", "select", "validate") and all(names.value(g, k) is not None for g, k in (("bonus", "xp"), ("bonus", "drop"), ("mod", "choose"), ("mod", "random"))),
+                "build": names.d.get("build"), "table": bool(gamedata.data().get("challenges")),
+                "now": {"active": challenges.describe(st.active) if st.active else None, "proposed": [challenges.describe(c) for c in st.proposals], "rule": st.rule},
+                "last": list(reversed(self.fight.chal_log[-8:]))}
+
     def boost_view(self):
         s = boost.load_settings(self.aid); f = boost.fields()
         return {"live": self.status == "connected", "points": self.base.get(boost.POINTS), "breed": gamedata.get("breeds", self.breed_id) if self.breed_id else None,
@@ -678,7 +802,7 @@ class Session:
 
     def _note_sent(self, name, body):
         """Remember the last move / use / border change / attack: the next map change is explained by one of them (see _learn_passage)."""
-        now = time.time()
+        now = time.time(); self._sent_tail.append((now, name))
         try:
             if name == login.JOK:
                 raw = next((v for f, v in parse(body) if f == 1 and isinstance(v, bytes)), b""); i = 0; last = None
@@ -688,6 +812,7 @@ class Session:
                 stand = (self._last.get("jok") or (0, None, self.my_cell))[2] if self._last.get("jok") and self._last["jok"][1] == self.map_id else self.my_cell
                 self._last["itz"] = (now, self.map_id, _vi(body, 1), _vi(body, 3), stand)
             elif name in (login.JOC, login.HMS): self._last["joc" if name == login.JOC else "hms"] = now
+            elif name in (login.ILT, login.IKY): self._last["talk"] = now      # a dialog (talk / reply) can move the character too: a quest scene is not a door
         except (ValueError, IndexError): pass
 
     def _learn_passage(self, prev, new):
@@ -702,7 +827,8 @@ class Session:
             self.arrival_inside = True
             if gamedoors.record(prev, itz[2], itz[3], None, new, itz[4]): self.log("event", f"Passage appris : porte {itz[3]} de {prev} → {new} (depuis la case {itz[4]})")
             return
-        jok = L.get("jok")
+        talk = L.get("talk", 0); jok = L.get("jok")
+        if talk and now - talk < 15 and (not jok or talk > jok[0]): return      # the dialog came after the last walk: it moved us (a quest scene), the walk did not
         if jok and jok[1] == prev and now - jok[0] < 12:
             m = gamemaps.load(prev)
             if m and any(jok[2] in gamemaps.exit_cells(m, side) for side in ("top", "bottom", "left", "right")): return      # a border: the neighbour graph already has it
@@ -1052,26 +1178,39 @@ class Session:
 
     def _do_attack(self, actor, max_group=None):
         """Walk next to a monster group, attack it (hms) and play the whole fight with fightbot."""
+        ctx, self.fight_ctx = self.fight_ctx or challenges.Context(), None      # what this fight is for (challenge bonus): consumed even when the attack fails early
         with self._lock: cell = self.actors.get(actor); mons = list(self.groups.get(actor, []))
         m = self.mapdata()
         if cell is None or not m: raise RuntimeError("groupe introuvable sur la carte")
         limit = fightbot.MAX_GROUP if max_group is None else max_group
         if len(mons) > limit: raise RuntimeError(f"groupe trop gros ({len(mons)} monstres, max {limit})")
-        x, y = gamemaps.to_xy(cell)
-        adjacent = {gamemaps.from_xy(x + dx, y + dy) for dx, dy in gamemaps.DIRS} - {None}
-        if self.my_cell not in adjacent:
-            best = None
-            for c in adjacent:
-                path, _ = self.plan(c)
-                if path and (best is None or len(path) < len(best)): best = path
-            if best is None: raise RuntimeError("aucune case accessible à côté du groupe")
-            if len(best) > 1: self._walk(best)
-        self._mapchanged.clear()
-        self._send(login.HMS, f_varint(2, actor)); self.log("action", f"→ hms : attaquer le groupe {actor} ({', '.join(gamedata.quest_data('monsters', i) or str(i) for i in mons)})")
-        if not self._mapchanged.wait(8): raise RuntimeError("le serveur n'a pas lancé le combat (pas de jow)")
+        for attempt in range(2):      # the monsters walk about: the group may have moved while we walked or waited, so the second try starts from where it is now
+            if attempt:
+                with self._lock: cell = self.actors.get(actor)
+                if cell is None: raise RuntimeError("groupe introuvable sur la carte")
+            x, y = gamemaps.to_xy(cell)
+            adjacent = {gamemaps.from_xy(x + dx, y + dy) for dx, dy in gamemaps.DIRS} - {None}
+            if self.my_cell not in adjacent:
+                best = None
+                for c in adjacent:
+                    path, _ = self.plan(c)
+                    if path and (best is None or len(path) < len(best)): best = path
+                if best is None: raise RuntimeError("aucune case accessible à côté du groupe")
+                if len(best) > 1: self._walk(best)
+                with self._lock: cell = self.actors.get(actor) or cell
+                x, y = gamemaps.to_xy(cell)
+                if self.my_cell not in ({gamemaps.from_xy(x + dx, y + dy) for dx, dy in gamemaps.DIRS} - {None}): continue      # it moved away during the walk: look again
+            self._mapchanged.clear(); t0 = time.time()
+            if self._trace is None: self._trace = []      # from the attack on: the placement messages (challenges...) arrive right after the map load
+            self._send(login.HMS, f_varint(2, actor)); self.log("action", f"→ hms : attaquer le groupe {actor} ({', '.join(gamedata.quest_data('monsters', i) or str(i) for i in mons)}) depuis la case {self.my_cell}, groupe en {cell}")
+            if self._mapchanged.wait(8): break
+            got = [t for ts, t, _b in list(self.recent) if ts >= t0 and t not in ("knb", None)]
+            self.log("warn", f"hms sans effet (groupe en {cell}, moi en {self.my_cell}) ; réponses du serveur : " + (", ".join(got[:8]) or "aucune"))
+        else:
+            self._trace = None; raise RuntimeError("le serveur n'a pas lancé le combat (pas de jow)")
+        ctx.n_enemies, ctx.monsters = len(mons), list(mons); self.fight.begin(ctx)
         time.sleep(2.5)   # the real client waits for the fight map before placement
-        t_fight = time.time()
-        self._trace = []   # record every message of this fight for a post-mortem (dofus_net/fights/*.jsonl)
+        t_fight = time.time()   # every message of this fight is recorded for a post-mortem (dofus_net/fights/*.jsonl), from the attack on
         try: self.fight.play()
         finally:
             self._dump_trace(mons)
@@ -1084,7 +1223,8 @@ class Session:
             d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fights"); os.makedirs(d, exist_ok=True)
             names = "-".join((gamedata.quest_data("monsters", m) or str(m)).replace(" ", "_") for m in monsters)[:60]
             path = os.path.join(d, time.strftime("%Y%m%d-%H%M%S") + f"_{names}.jsonl")
-            head = {"map": self.map_id, "monsters": monsters, "my_cell": self.my_cell, "stats": self.stats, "spells": self.spell_ids}
+            head = {"map": self.map_id, "monsters": monsters, "my_cell": self.my_cell, "stats": self.stats, "spells": self.spell_ids,
+                    "challenge": self.fight.chal_log[-1] if self.fight.chal_log else None, "challenge_msgs": self.fight.chal.names}
             with open(path, "w", encoding="utf8") as f:
                 f.write(json.dumps(head) + "\n")
                 for e in tr: f.write(json.dumps(e) + "\n")
@@ -1099,6 +1239,7 @@ class Session:
         if self._map_changed_at < since: return False
         time.sleep(2.5)   # like the real client: wait for the fight map before the placement phase
         self._trace = []
+        ctx, self.fight_ctx = self.fight_ctx or challenges.Context("boss", boss=True), None; self.fight.begin(ctx)
         try: self.fight.play()
         except RuntimeError as e:
             self.log("warn", f"pas de combat après le dialogue : {e}"); return False
@@ -1107,8 +1248,12 @@ class Session:
 
     def _do_resume_fight(self):
         """The character is already in a fight (reconnection): the placement is over, only play the turns."""
-        self.fight.over.clear(); self._trace = []
-        try: self.fight.play(resume=True)
+        self.fight.over.clear(); self._trace = []; self.fight.begin(self.fight_ctx); self.fight_ctx = None
+        # a fight that started in the middle of this session (a trapped door, a scripted fight) is a new fight: it still needs the placement (igk) and the ready
+        # (jxj) the real client sends; only a reconnection right after the login is a real resume (capture of 2026-11-04: igk + kjt, then the turns)
+        fresh = bool(self.since) and time.time() - self.since > 20 and self.fight.started.is_set() and self.fight.turn_no == 0
+        if fresh: self.log("info", "combat engagé en cours de session : placement puis prêt")
+        try: self.fight.play(resume=not fresh)
         finally: self._dump_trace([])
 
     def attack(self, actor):
@@ -1278,7 +1423,9 @@ class Session:
 
             def on_message(t, body):
                 self.recent.append((time.time(), t, body)); self.trace("S", t, body)
-                if t not in KEEP: return
+                if t not in KEEP:
+                    if self.fight.chal.listening(): self.fight.on_challenge_message(t, body)      # a message the bot does not know, around a map load: a challenge announcement?
+                    return
                 self._on_map_message(t, body)
                 if t in (login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP) or t in QUEST_MSGS or t in FIGHT_MSGS or t == "lof": return
                 if t in gamejobs.MESSAGES:

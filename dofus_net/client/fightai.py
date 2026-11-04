@@ -30,6 +30,8 @@ BEAM = 8
 PER_SPELL_CELLS = 7             # target cells kept per (position, spell) after a static pre-ranking
 MAX_DESTS = 14
 SUMMON_VALUE = 9.0
+ANTI_HEAL_VALUE = 14.0      # a spell that cuts the heals an enemy receives, on an enemy seen healing (pichons heal ~20 a turn: as much as my whole turn of damage)
+FOCUS_BONUS = 0.8           # extra value of damage on an enemy already hurt: finish one enemy instead of spreading the hits
 BUFF_VALUE = 5.0
 DEBUFF_VALUE = 3.0
 
@@ -76,8 +78,10 @@ def load_spell(sid, level, ap_override=None):
     ok = [x for x in lvls if (x.get("min_level") or 0) <= (level or 1)]
     best = max(ok, key=lambda x: x["grade"]) if ok else first
     fx = [Fx(r) for r in best.get("fx", [])]
-    return Spell(sid, sp["name"], ap_override or first["ap"], first["min_range"], first["range"], first["max_per_turn"], first.get("per_target", 0),
-                 first["cooldown"], first.get("init_cd", 0), best.get("crit", 0), fx, best.get("states") or "")
+    spell = Spell(sid, sp["name"], ap_override or first["ap"], first["min_range"], first["range"], first["max_per_turn"], first.get("per_target", 0),
+                  first["cooldown"], first.get("init_cd", 0), best.get("crit", 0), fx, best.get("states") or "")
+    spell.antiheal = "soins reçus" in (sp.get("desc") or "").lower()      # "Réduit les soins reçus par la cible" (Hémorragie)
+    return spell
 
 
 # ---- geometry ----
@@ -162,13 +166,25 @@ class Enemy:
     def threat(self): return self.hit
 
 
+class Rules:
+    """What the active challenge asks of my turns (kinds from client/challenges.py RULES). The planner honours: adj_enemy / not_adj_enemy (Hardi / Prudent:
+    where the turn ends), once_turn (Versatile: no spell twice in a turn), focus (Focus: one enemy at a time, `focus` = the enemy being attacked).
+    The movement kinds (stay, move1, moveall: Statue, Zombie, Nomade) are applied by the caller (fightbot), which owns the movement points."""
+    def __init__(self, kinds=(), focus=None): self.kinds, self.focus = set(kinds), focus
+
+    def has(self, kind): return kind in self.kinds
+
+    def __bool__(self): return bool(self.kinds)
+
+
 class Board:
     """Snapshot of the fight at one point of my turn."""
-    def __init__(self, m, me, ap, mp, hp, hp_max, stats, enemies, allies, turn):
+    def __init__(self, m, me, ap, mp, hp, hp_max, stats, enemies, allies, turn, rules=None):
         self.m, self.me, self.ap, self.mp, self.hp, self.hp_max, self.stats = m, me, ap, mp, hp, hp_max, stats
         self.enemies = enemies      # {id: Enemy}
         self.allies = allies        # {id: cell} (my summons and companions, not me)
         self.turn = turn
+        self.rules = rules or Rules()
         self.blocked = {e.cell for e in enemies.values()} | set(allies.values())
 
     @property
@@ -183,10 +199,11 @@ class Memory:
         self.casts_turn = {}        # spell id -> casts this turn
         self.target_casts = {}      # (spell id, target actor) -> casts this turn
         self.reliability = {}       # spell id -> [reactions, silences]
+        self.healed = set()         # enemies seen receiving a heal this fight
 
     def new_turn(self): self.casts_turn = {}; self.target_casts = {}
 
-    def new_fight(self): self.last_cast = {}; self.buff_until = {}; self.new_turn()
+    def new_fight(self): self.last_cast = {}; self.buff_until = {}; self.healed = set(); self.new_turn()
 
     def rel(self, sid):
         ok, bad = self.reliability.get(sid, [0, 0])
@@ -273,6 +290,8 @@ def evaluate(sp, cand, d, board, hp, my_hp, mem, n_summons, rel):
                 if new_hp[eid] <= 0: continue
                 dm = damage(f, stats, e); real = min(dm, new_hp[eid])
                 value += real * (1 + 0.03 * e.threat)
+                if e.hp_max: value += real * FOCUS_BONUS * max(0.0, 1.0 - new_hp[eid] / e.hp_max)      # already hurt: finish it
+                if getattr(sp, "antiheal", False) and eid in mem.healed and (sp.id not in mem.last_cast or board.turn - mem.last_cast[sp.id] >= 3): value += ANTI_HEAL_VALUE
                 if dm >= new_hp[eid]: value += 3 + 2.0 * e.threat          # kill: the enemy stops hurting us
                 new_hp[eid] -= dm
                 if f.kind == "steal":
@@ -316,34 +335,49 @@ def position_score(cell, board, alive_ids, best_range):
 def best_casts(d, board, spells, mem, skipped):
     """Beam search over the casts possible from position d -> (value, [(spell, cell)], enemy hp after, my hp after)."""
     cache = {sp.id: candidates(sp, d, board, skipped) for sp in spells}
-    n_summons = len(board.allies)
-    start = (0.0, board.ap, (), {eid: e.hp for eid, e in board.enemies.items()}, board.hp, dict(mem.casts_turn), dict(mem.target_casts))
+    n_summons = len(board.allies); rules = board.rules; focus_rule, once_rule = rules.has("focus"), rules.has("once_turn")
+    foc0 = rules.focus if rules.focus in board.enemies and board.enemies[rules.focus].hp > 0 else None
+    start = (0.0, board.ap, (), {eid: e.hp for eid, e in board.enemies.items()}, board.hp, dict(mem.casts_turn), dict(mem.target_casts), foc0)
     beam = [start]; best = start
     for _ in range(MAX_CASTS):
         nxt = []
-        for val, ap, seq, hp, mhp, cts, tcs in beam:
+        for val, ap, seq, hp, mhp, cts, tcs, foc in beam:
             for sp in spells:
                 if sp.ap > ap or not sp.useful: continue
                 if sp.per_turn and cts.get(sp.id, 0) >= sp.per_turn: continue
+                if once_rule and cts.get(sp.id, 0) >= 1: continue      # Versatile: no spell twice in a turn
                 if sp.id in mem.last_cast and sp.cooldown > 1 and board.turn - mem.last_cast[sp.id] < sp.cooldown: continue
                 if any(s.id == sp.id for s, _c in seq) and any(f.kind in ("buff", "summon") for f in sp.fx) and not any(f.kind in ("dmg", "steal", "heal") for f in sp.fx): continue
                 rel = mem.rel(sp.id)
                 for cand in cache[sp.id]:
                     if sp.per_target and any(tcs.get((sp.id, e), 0) >= sp.per_target for e in cand[1][:1]): continue
                     if all(hp[e] <= 0 for e in cand[1]) and cand[1] and not cand[2]: continue          # everything it would hit is already dead
+                    if focus_rule and cand[1] and (len(cand[1]) > 1 or (foc is not None and hp.get(foc, 0) > 0 and cand[1][0] != foc)): continue      # Focus: one enemy at a time, until it dies
                     r = evaluate(sp, cand, d, board, hp, mhp, mem, n_summons + sum(1 for s, _c in seq if any(f.kind == "summon" for f in s.fx)), rel)
                     if r is None: continue
                     v, nhp, nmhp = r
+                    if getattr(sp, "antiheal", False) and cand[1] and tcs.get((sp.id, cand[1][0]), 0) >= 1: v -= ANTI_HEAL_VALUE * rel      # the heal reduction is already on this target: its bonus is not earned twice
                     v = v / (1 + 0.04 * sp.ap)
                     c2 = dict(cts); c2[sp.id] = c2.get(sp.id, 0) + 1
                     t2 = dict(tcs)
                     if cand[1]: t2[(sp.id, cand[1][0])] = t2.get((sp.id, cand[1][0]), 0) + 1
-                    nxt.append((val + v, ap - sp.ap, seq + ((sp, cand[0]),), nhp, nmhp, c2, t2))
+                    nfoc = foc if foc is not None and hp.get(foc, 0) > 0 else (cand[1][0] if focus_rule and cand[1] else None)
+                    nxt.append((val + v, ap - sp.ap, seq + ((sp, cand[0]),), nhp, nmhp, c2, t2, nfoc))
         if not nxt: break
         nxt.sort(key=lambda s: -s[0])
         beam = nxt[:BEAM]
         if beam[0][0] > best[0]: best = beam[0]
     return best[0], list(best[2]), best[3], best[4]
+
+
+def position_ok(end, board, alive_ids):
+    """Does ending the turn on `end` respect the challenge (Hardi: next to an enemy; Prudent: not next to one)?"""
+    r = board.rules
+    if not (r.has("adj_enemy") or r.has("not_adj_enemy")): return True
+    adj = any(man(end, board.enemies[e].cell) == 1 for e in alive_ids)
+    if r.has("adj_enemy") and alive_ids and not adj: return False
+    if r.has("not_adj_enemy") and adj: return False
+    return True
 
 
 def plan(board, spells, mem, skipped=frozenset()):
@@ -358,7 +392,7 @@ def plan(board, spells, mem, skipped=frozenset()):
         return (abs(near - min(best_range, 3)), len(reach[c]))
     dests = sorted(reach, key=cheap)[:MAX_DESTS]
     if board.me not in dests: dests.append(board.me)
-    best = None
+    best = best_any = None
     for d in dests:
         val, casts, hp_after, _mhp = best_casts(d, board, spells, mem, skipped) if spells else (0.0, [], {}, board.hp)
         alive = [eid for eid, h in hp_after.items() if h > 0] if casts else list(board.enemies)
@@ -366,7 +400,10 @@ def plan(board, spells, mem, skipped=frozenset()):
         ends = reachable(board.m, d, max(0, left), board.blocked - {board.me}) if left > 0 else {d: [d]}
         for end, epath in ends.items():
             score = val + position_score(end, board, alive, best_range) - 0.04 * (len(reach[d]) - 1 + len(epath) - 1)
-            if best is None or score > best[0]: best = (score, d, casts, end, epath, val)
+            cand = (score, d, casts, end, epath, val)
+            if best_any is None or score > best_any[0]: best_any = cand
+            if position_ok(end, board, alive) and (best is None or score > best[0]): best = cand
+    best = best or best_any      # a challenge position nobody can reach this turn: play the turn as usual
     if best is None: return None
     score, d, casts, end, epath, val = best
     if not casts and end == board.me and d == board.me: return None

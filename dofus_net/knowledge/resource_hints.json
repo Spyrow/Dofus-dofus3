@@ -1,10 +1,18 @@
 {
  "312": {
-  "name": "Fer",
   "maps": [
    153879812,
    153880324
   ],
-  "why": "le minerai est dans la mine, dont la porte est sur les Pâturages [2, -4] ou [3, -4]"
+  "name": "Fer",
+  "only": [
+   153358338,
+   153358344,
+   153357314,
+   153357318,
+   153358342,
+   153357312
+  ],
+  "why": "le minerai est dans la mine (6 cartes intérieures), dont la porte est sur les Pâturages [2, -4] ou [3, -4] ; le fer ne pousse que dans ces 6 cartes de la mine"
  }
 }

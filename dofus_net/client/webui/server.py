@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-import accounts, boost, gamesession, groq, questbook
+import accounts, boost, challenges, gamesession, groq, questbook, knowledge
 sys.path.insert(0, HERE)
 import auth
 from pkce_login import login
@@ -132,6 +132,27 @@ class H(BaseHTTPRequestHandler):
             with open(os.path.join(HERE, "index.html"), "rb") as f: b = f.read()
             self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+        elif p == "/api/trajet/catalog":      # jobs (gathering) with their resources, monsters with their zones
+            import farmroute
+            self._json(farmroute.catalog())
+        elif p == "/api/farm/route":      # ?kind=monster|resource&id=..&acc=<account id>: the maps of the farm route, from the character's current map
+            q = dict(kv.split("=", 1) for kv in self.path.partition("?")[2].split("&") if "=" in kv)
+            try: ident = int(q.get("id", ""))
+            except ValueError: return self._json({"error": "bad request"}, 400)
+            import farmroute
+            sess = gamesession._sessions.get(q.get("acc", ""))
+            zone = int(q["zone"]) if q.get("zone", "").lstrip("-").isdigit() else None
+            pods = None
+            if sess and sess.status == "connected":
+                with sess._lock: v = sess._vitals() or {}
+                if v.get("pods_max") is not None and v.get("pods") is not None: pods = max(0, v["pods_max"] - v["pods"])
+            self._json(farmroute.build(q.get("kind", "resource"), ident, sess.map_id if sess and sess.status == "connected" else None, zone, pods))
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/farm", p):      # progress of the running (or last) farm
+            sess = gamesession._sessions.get(m[1]); f = sess.auto.farm if sess else None
+            self._json({"farm": f, "on": bool(sess and sess.auto.on and f and f["state"] == "running"), "status": sess.status if sess else "disconnected", "busy": sess.busy if sess else None})
+        elif p == "/api/market":      # priced items with the best average and where they come from (see client/market.py)
+            import market
+            self._json(market.table())
         elif p == "/api/accounts":
             self._json([DEMO] + [dict(a, session=gamesession.status(a["id"])) for a in accounts.list_accounts()])
         elif p == "/api/login":
@@ -145,6 +166,8 @@ class H(BaseHTTPRequestHandler):
             else: self._json(data)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/boost", p):
             self._json(gamesession.session(m[1]).boost_view())
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/challenges", p):      # fight challenges: settings, state of the learned requests, the last fights
+            self._json(gamesession.session(m[1]).challenge_view())
         elif m := re.fullmatch(r"/api/accounts/(\w+)/questreport", p):     # ?area=Incarnam : finished / active / still to do, with the scraped guide
             import questreport
             sess = gamesession.session(m[1]); area = (parse_qs(urlparse(self.path).query).get("area") or ["Incarnam"])[0]
@@ -156,6 +179,24 @@ class H(BaseHTTPRequestHandler):
             self._json({"configured": groq.configured(), "model": groq.model()})   # never the key
         elif p == "/api/questbook":
             self._json(questbook.summary())
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/achievements", p):      # ?q=piou : unlocked achievements (the server only lists the unlocked ones, not the progress of the others)
+            import gameachievements, knowledge
+            sess = gamesession.session(m[1]); q = (parse_qs(urlparse(self.path).query).get("q") or [""])[0].casefold()
+            rows = [{"id": i, "name": gameachievements.name(i), "reward_pending": bool(pend)} for i, pend in sorted(sess.achievements.items())]
+            other = [{"id": i, "name": gameachievements.name(i), "by_characters": sorted(x for x in o if x)} for i, o in sorted(sess.achievements_account.items()) if i not in sess.achievements]
+            prog = None
+            try: ach = int((parse_qs(urlparse(self.path).query).get("id") or [0])[0])
+            except ValueError: ach = 0
+            if ach:
+                cr = gameachievements.criteria(ach); kills = knowledge.load(f"kills_{sess.char_id}.json", {}) if sess.char_id else {}
+                if cr:
+                    import gamedata
+                    mons = [{"monster": gamedata.quest_data("monsters", m) or m, "id": m, "killed_since_tracking": kills.get(str(m), 0)} for m in cr["monsters"]]
+                    prog = {"achievement": gameachievements.name(ach), "validated": ach in sess.achievements, "minimum_level": cr["level"], "level_ok": (sess.level or 0) >= (cr["level"] or 0),
+                            "monsters_to_kill_at_least_once": mons, "not_yet_seen_killed": [m["monster"] for m in mons if not m["killed_since_tracking"]], "unknown_criteria": cr["other"],
+                            "note": "kills are counted from the moment this tracking was added; the server does not send the real progress"}
+            self._json({"connected": sess.status == "connected", "character": sess.char_id, "progress": prog, "count": len(rows), "unlocked": [r for r in rows if q in (r["name"] or "").casefold()],
+                        "other_characters_only": [r for r in other if q in (r["name"] or "").casefold()]})
         elif m := re.fullmatch(r"/api/accounts/(\w+)/recent", p):   # diagnostics: the last messages received from the game server
             self._json([{"t": ts, "type": t, "size": len(b), "hex": b.hex()[:80]} for ts, t, b in list(gamesession.session(m[1]).recent)[-80:]])
         elif m := re.fullmatch(r"/api/accounts/(\w+)/mapview", p):
@@ -216,12 +257,17 @@ class H(BaseHTTPRequestHandler):
             if not text: return self._json({"error": "instruction vide"}, 400)
             err = gamesession.session(m[1]).auto.run_instruction(text)
             self._json({"error": err} if err else {"ok": True}, 409 if err else 202)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/guide_done", p):      # {"n": step number}: mark a manual step of the rush guide as done by hand
+            try: n = int(body.get("n"))
+            except (TypeError, ValueError): return self._json({"error": "bad request"}, 400)
+            self._json({"done": sorted(gamesession.session(m[1]).auto._guided_progress(n))})
         elif m := re.fullmatch(r"/api/accounts/(\w+)/autopilot", p):
             sess = gamesession.session(m[1])
             if body.get("on"):
                 quest_id = body.get("quest_id")
                 if quest_id is not None and type(quest_id) is not int:
                     return self._json({"error": "identifiant de quête invalide"}, 400)
+                sess.auto.guided = bool(body.get("guide"))      # strict order of the rush guide (guideorder.py)
                 if not sess.auto.start(body.get("kinds") if isinstance(body.get("kinds"), list) else None, bool(body.get("llm")), quest_id):
                     return self._json({"error": "impossible : personnage non connecté, autopilote déjà actif ou quête inactive"}, 409)
             else: sess.auto.stop()
@@ -244,7 +290,19 @@ class H(BaseHTTPRequestHandler):
         elif m := re.fullmatch(r"/api/accounts/(\w+)/equip", p):    # {"item": item id}
             try: n = int(body.get("item"))
             except (TypeError, ValueError): return self._json({"error": "bad request"}, 400)
-            err = gamesession.session(m[1]).equip(n)
+            pos = body.get("position", 1)
+            if type(pos) is not int or not 0 <= pos <= 20: return self._json({"error": "bad request"}, 400)
+            err = gamesession.session(m[1]).equip(n, pos)
+            self._json({"error": err} if err else {"ok": True}, 409 if err else 202)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/farm", p):      # {"kind": "monster"|"resource", "id": n, "limit": n, "max_group": n} or {"stop": true}
+            sess = gamesession.session(m[1])
+            if body.get("stop"): sess.auto.stop(); return self._json({"ok": True}, 202)
+            err = sess.auto.start_farm(body.get("kind"), body.get("id"), body.get("limit") or 0, body.get("max_group") or 4, body.get("zone"), bool(body.get("bank")))
+            self._json({"error": err} if err else {"ok": True}, 409 if err else 202)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/market", p):      # {"ids": [item ids] (default: every resource), "delay": seconds between requests}
+            try: delay = max(0.3, float(body.get("delay") or 1.0)); ids = [int(i) for i in body["ids"]] if body.get("ids") else None
+            except (TypeError, ValueError): return self._json({"error": "bad request"}, 400)
+            err = gamesession.session(m[1]).market_scan_auto(ids, delay)
             self._json({"error": err} if err else {"ok": True}, 409 if err else 202)
         elif m := re.fullmatch(r"/api/accounts/(\w+)/(harvest|craft)", p):    # {"element": id} / {"item": result item id, "count": n}
             try:
@@ -261,6 +319,10 @@ class H(BaseHTTPRequestHandler):
                 err = gamesession.session(m[1]).start_boost(w)
                 if err: return self._json({"error": err}, 409)
             self._json(s, 202 if body.get("run") else 200)
+        elif m := re.fullmatch(r"/api/accounts/(\w+)/challenges", p):      # {"mode": auto|xp|drop|off, "choose": bool}
+            mode, choose = body.get("mode"), body.get("choose")
+            if mode is not None and mode not in challenges.MODES: return self._json({"error": "mode invalide"}, 400)
+            self._json(challenges.save_settings(m[1], mode, choose if isinstance(choose, bool) else None))
         elif m := re.fullmatch(r"/api/accounts/(\w+)/syncquests", p):
             self._json({"finished": gamesession.session(m[1]).sync_quests()})
         elif m := re.fullmatch(r"/api/accounts/(\w+)/(talk|reply)", p):

@@ -61,10 +61,40 @@ def name(achievement_id):
 
 
 def listing(body):
-    """mdp body -> [(achievement id, has a reward state)]"""
+    """mdp body -> [(achievement id, has a reward state, character id)]. The server lists the achievements of EVERY character of the account, each entry
+    tagged with the character that got it (field 2): filter on it, or another character's achievement looks like ours."""
     out = []
     for f, v in parse(body):
         if f == 1 and isinstance(v, bytes):
             e = dict(parse(v))
-            if isinstance(e.get(1), int): out.append((e[1], 3 in e))
+            if isinstance(e.get(1), int): out.append((e[1], 3 in e, e.get(2) if isinstance(e.get(2), int) else None))
     return out
+
+
+_criteria = None
+
+
+def criteria(achievement_id):
+    """Static objectives of an achievement, read from the game's objectives bundle: {"monsters": [monster ids to have fought and killed], "level": minimum level or None, "other": [criteria not understood]}.
+    The criteria are strings such as "(Ef>491,0)" (monster 491 killed at least once) and "PL>14" (level above 14). The server never sends the progress of an unfinished achievement."""
+    global _criteria
+    with _lock:
+        if _criteria is None:
+            _criteria = {}
+            import re, warnings; warnings.filterwarnings("ignore")
+            import UnityPy, gamemaps
+            UnityPy.config.FALLBACK_UNITY_VERSION = "6000.3.16f1"
+            game = gamemaps._game_dir()
+            if game:
+                env = UnityPy.load(os.path.join(game, "Dofus_Data", "StreamingAssets", "Content", "Data", "data_assets_achievementobjectivesdataroot.asset.bundle"))
+                for o in env.objects:
+                    if o.type.name != "MonoBehaviour": continue
+                    for r in (o.read_typetree().get("references") or {}).get("RefIds", []):
+                        d = r.get("data") or {}; a = d.get("achievementId")
+                        if a is None: continue
+                        c = _criteria.setdefault(a, {"monsters": [], "level": None, "other": []}); crit = d.get("criterion") or ""
+                        m = re.fullmatch(r"\(Ef>(\d+),0\)", crit); lv = re.fullmatch(r"PL>(\d+)", crit)
+                        if m: c["monsters"].append(int(m[1]))
+                        elif lv: c["level"] = int(lv[1]) + 1
+                        else: c["other"].append(crit)
+    return _criteria.get(int(achievement_id))

@@ -14,7 +14,7 @@ The fight state is followed from the events: jsq actions 91..100 carry the damag
 heals ({39: {2: target, 4: amount}}), so the life of every fighter is exact. Summons and allies are told from the monsters by the master id of the
 fighter entry (3.4.10: 0 for a monster, the summoner for a summon)."""
 import threading, time
-import gamedata, gamemaps, fightai
+import gamedata, gamemaps, fightai, challenges
 from wire import parse, f_bytes, f_varint, enc_varint
 
 ACK_IDS = {3, 7, 8, 10, 12, 13, 15, 16, 17, 23, 59}   # jsy ids the real client acknowledged for its own actor
@@ -77,16 +77,32 @@ class Fight:
     REACH_SEEN = {}
 
     def __init__(self, sess):
-        self.s = sess; self.spell_score = {}; self.mem = fightai.Memory(); self.mem.reliability = self.spell_score; self.reset()
+        self.s = sess; self.spell_score = {}; self.mem = fightai.Memory(); self.mem.reliability = self.spell_score
+        self.chal = challenges.State(); self.chal_prefs = {}; self.chal_log = []; self.ctx = None      # fight challenges (client/challenges.py): kept across fights
+        self.reset()
 
     def reset(self):
         self.started, self.over, self.my_turn, self.cast_evt = (threading.Event() for _ in range(4))
         self.jvj_me = False; self.dead = set(); self.casts = {}
         self.tpl, self.hp, self.pm, self.mutilated = {}, {}, {}, False      # fighter -> monster template / life / MP; Mutilation already cast this fight
         self.master, self.res, self.hp_max, self.my_hp, self.turn_no = {}, {}, {}, None, 0; self.mem.new_fight()
+        self.focus = None; self.mp_spent = 0      # Focus challenge: the enemy being attacked; movement points spent in this turn
         self.last_message_at = 0.0; self.ap_err = None      # ap_err: (AP I have, AP the spell needs, time) from the server's "not enough AP" answer
         if not hasattr(self, "cost"): self.cost = {}      # spell id -> the AP cost the server really asked (the data holds the first grade's), kept across fights
         if not hasattr(self, "spell_score"): self.spell_score = {}   # spell id -> [reactions, silences], kept across fights
+
+    def begin(self, ctx):
+        """A fight is about to start (the session just sent the attack, or a dialog started it): what it is for decides the challenge bonus."""
+        self.ctx = ctx
+
+    def on_challenge_message(self, t, body):
+        """A server message the session does not know, during the placement phase: is it a challenge? (read by its shape, client/challenges.py)"""
+        kind = self.chal.feed(t, body)
+        if kind in ("proposal", "one", "list"):
+            shown = self.chal.proposals if kind == "proposal" else self.chal.listed if kind == "list" else [self.chal.active]
+            self.s.log("info", f"Défis : message « {t} » = " + ("propositions" if kind == "proposal" else "défi du combat") + " : " + ", ".join(challenges.describe(c) for c in shown if c))
+        elif kind == "result":
+            self.s.log("event", "Défi " + ("RÉUSSI" if self.chal.result["ok"] else "échoué") + " : " + challenges.describe(self.chal.active or {"id": self.chal.result["id"]}))
 
     # ---- messages (called from the session's receive loop) ----
     def on_message(self, t, body):
@@ -192,7 +208,9 @@ class Fight:
             tgt, amount = s64(_vi(ev, 2)), _vi(ev, 4) or 0
             if tgt == s.char_id:
                 if self.my_hp is not None: self.my_hp = min(self.my_hp + amount, self._my_hp_max() or self.my_hp + amount)
-            elif tgt in self.hp: self.hp[tgt] = min(self.hp[tgt] + amount, self.hp_max.get(tgt, self.hp[tgt] + amount))
+            elif tgt in self.hp:
+                self.hp[tgt] = min(self.hp[tgt] + amount, self.hp_max.get(tgt, self.hp[tgt] + amount))
+                if self._is_enemy(tgt): self.mem.healed.add(tgt)      # a healer: anti-heal spells are worth casting on it
 
     def _my_hp_max(self): return self.s.stats.get(0)
 
@@ -214,6 +232,7 @@ class Fight:
             s._send(login.IGK); say("placement (igk)")   # jxi may already have arrived (it resets the state itself): do not reset here
             if not self.started.wait(10): raise RuntimeError("le combat n'a pas démarré (pas de jxi)")
             time.sleep(1.0)
+            self._placement_challenges()
             s._send(login.JXJ, f_varint(1, 1)); say("prêt (jxj)")
         end = time.time() + FIGHT_TIMEOUT
         while not self.over.is_set() and time.time() < end and s.status == "connected" and not s._stop.is_set():
@@ -230,6 +249,7 @@ class Fight:
             s._send(login.JWO); say("fin de tour (jwo)")
         if not self.over.wait(15): raise RuntimeError("fin du combat non reçue")
         say("terminé"); time.sleep(3)
+        self._challenge_outcome()
 
     def _score(self, spell_id, reacted):
         ok, fail = self.spell_score.get(spell_id, [0, 0]); self.spell_score[spell_id] = [ok + bool(reacted), fail + (not reacted)]
@@ -298,6 +318,7 @@ class Fight:
         if not s._moved.wait(3):
             got = sorted({str(t) for ts, t, _b in s.recent if ts >= t0 and t not in ("knb", None)})
             raise RuntimeError(f"déplacement refusé (le serveur a répondu : {', '.join(got) or 'rien'})")
+        self.mp_spent += len(path) - 1
         time.sleep(gamemaps.STEP_SECONDS * (len(path) - 1) + 0.6)
 
     def _wait_cast(self, sp):
@@ -373,7 +394,72 @@ class Fight:
             tpl = self.tpl.get(a); hp0 = self.hp_max.get(a) or self.hp.get(a) or 30
             hit = Fight.HIT.get(tpl, max(3.0, HIT_DEFAULT * hp0)) * 1.5
             enemies[a] = fightai.Enemy(a, c, self.hp.get(a, hp0), hp0, self.res.get(a, {}), self.pm.get(a, 3), Fight.REACH.get(tpl, 1), hit)
-        return fightai.Board(s.mapdata(), me, ap, mp, self.my_hp, hp_max or self.my_hp, stats, enemies, allies, self.turn_no)
+        return fightai.Board(s.mapdata(), me, ap, mp, self.my_hp, hp_max or self.my_hp, stats, enemies, allies, self.turn_no, self._rules())
+
+    # ---- challenges ----
+    def _rules(self):
+        """fightai.Rules of the active challenge, None when there is none the planner honours."""
+        rule = self.chal.rule
+        if rule not in challenges.POSITION_RULES: return None
+        if self.focus is not None and (self.focus in self.dead or self.hp.get(self.focus, 1) <= 0): self.focus = None
+        return fightai.Rules({rule}, self.focus)
+
+    def _caps(self):
+        """What the character can do, for the odds of a challenge: melee = most of its spells reach 2 cells at most."""
+        try: ranges = sorted(sp.max for sp in self._ai_spells())
+        except Exception: ranges = []
+        return {"melee": bool(ranges) and ranges[len(ranges) // 2] <= 2}
+
+    def _wait_for(self, pred, secs):
+        end = time.monotonic() + secs
+        while time.monotonic() < end:
+            if pred(): return True
+            time.sleep(0.1)
+        return bool(pred())
+
+    def _placement_challenges(self):
+        """Placement phase, just before the ready: set the bonus (XP / loot) and pick the challenge when the server offers a choice. Never raises."""
+        s = self.s; st = self.chal; say = lambda m: s.log("action", m)
+        ctx = self.ctx or challenges.Context(); ctx.n_enemies = len(self._enemy_cells()) or ctx.n_enemies
+        res = {}
+        try: res = challenges.place(st, ctx, challenges.settings(s.aid), challenges.Names(), self.chal_prefs, s._send, self._wait_for, say, self._caps())
+        except Exception as e: say(f"Défis : ignorés ({e!r})")
+        act = st.active
+        if act:
+            i = challenges.info(act["id"]); rule = st.rule
+            how = ("je le respecte" if rule in challenges.POSITION_RULES else "rien à adapter en solo" if rule in ("free", "order") else "je ne sais pas le respecter")
+            say(f"Défis : défi du combat : {challenges.describe(act)}" + (f" — {i['desc']}" if i else "") + f" → {how}")
+        elif st.listening() and not st.seen: say("Défis : aucun défi annoncé pour ce combat")
+        self.chal_log.append({"t": round(time.time()), "purpose": ctx.purpose, "monsters": ctx.monsters, "bonus": res.get("bonus"), "why": res.get("reason"),
+                              "proposed": [challenges.describe(c) for c in st.proposals], "chosen": res.get("chosen"), "active": challenges.describe(act) if act else None,
+                              "rule": st.rule, "sent": res.get("sent"), "result": None})
+        del self.chal_log[:-20]
+
+    def _challenge_outcome(self):
+        """End of the fight: the result the server announced for the challenge."""
+        r = self.chal.result
+        if self.chal_log and self.chal_log[-1]["result"] is None and self.chal.active_id:
+            self.chal_log[-1]["result"] = None if r is None else ("réussi" if r["ok"] else "échoué")
+        if r is None and self.chal.active_id: self.s.log("info", "Défis : résultat du défi non reçu (message de résultat non reconnu)")
+
+    def _rule_moves(self, rule, mp_total):
+        """Zombie (exactly one movement point per turn) and Nomade (every movement point): spend what the plan did not, in one walk."""
+        if rule not in ("move1", "moveall") or self.over.is_set(): return
+        need = (1 if rule == "move1" else mp_total) - self.mp_spent
+        if need <= 0: return
+        s = self.s; say = lambda m: s.log("action", "Combat : " + m)
+        with s._lock: me = s.my_cell
+        if me is None: return
+        blocked = {c for a, c in s.actors.items() if a != s.char_id}
+        exact = {c: p for c, p in fightai.reachable(s.mapdata(), me, need, blocked).items() if len(p) - 1 == need}
+        name = "Zombie" if rule == "move1" else "Nomade"
+        if not exact: say(f"défi {name} : impossible de dépenser {need} PM de plus"); return
+        board = self._board(0, 0); alive = list(board.enemies) if board else []
+        rng = max((sp.max for sp in self._ai_spells()), default=1)
+        key = lambda c: (board is None or fightai.position_ok(c, board, alive), fightai.position_score(c, board, alive, rng) if board else 0)
+        cell = max(exact, key=key)
+        try: self._move(exact[cell], say, "défi " + name + (" : un PM exactement" if rule == "move1" else " : tous les PM"))
+        except RuntimeError as e: say(f"défi : déplacement refusé ({e})")
 
     def _ai_spells(self):
         out = []
@@ -383,7 +469,15 @@ class Fight:
         return out
 
     def _turn_ai(self, ap, mp):
-        """Play one turn with the planner -> False when it cannot (no spell data), so that the simple engine plays the turn."""
+        """Play one turn with the planner, then the movement the challenge asks for -> False when the planner cannot (no spell data): the simple engine plays."""
+        rule = self.chal.rule; mp_total = mp
+        if rule == "stay": mp = 0          # Statue: the turn ends where it began
+        elif rule == "move1": mp = min(mp, 1)      # Zombie
+        ok = self._turn_ai_loop(ap, mp)
+        if ok: self._rule_moves(rule, mp_total)
+        return ok
+
+    def _turn_ai_loop(self, ap, mp):
         s = self.s; say = lambda m: s.log("action", "Combat : " + m)
         spells = self._ai_spells()
         if not spells: return False
@@ -410,6 +504,7 @@ class Fight:
                 if not ok: skipped.add((sp.id, cell)); say(f"pas de réaction à « {sp.name} » sur la case {cell} : écarté pour ce tour"); continue
                 ap -= sp.ap; mem.casts_turn[sp.id] = mem.casts_turn.get(sp.id, 0) + 1; mem.last_cast[sp.id] = self.turn_no
                 if victim: mem.target_casts[(sp.id, victim)] = mem.target_casts.get((sp.id, victim), 0) + 1
+                if victim and self.chal.rule == "focus" and self.focus is None: self.focus = victim      # Focus challenge: this one first, to the end
                 for f in sp.fx:
                     if f.kind == "buff": mem.buff_until[sp.id] = self.turn_no + (f.duration if 0 < f.duration < 50 else 999)
                 time.sleep(1.3); continue
@@ -424,7 +519,7 @@ class Fight:
         is only ever removed for good when the server announces its death."""
         import login
         s = self.s; say = lambda m: s.log("action", "Combat : " + m)
-        ap, mp = s.stats.get(1, 6), s.stats.get(23, 3)
+        ap, mp = s.stats.get(1, 6), s.stats.get(23, 3); self.mp_spent = 0
         spells = self._spells(); casts = {}; skipped = set(); moves_without_cast = 0
         say(f"mon tour ({ap} PA, {mp} PM)")
         mut, stase = self._kite_spells()

@@ -188,7 +188,7 @@
  "quests": {
   "1631": {
    "name": "Réponses à tout",
-   "seen": 434,
+   "seen": 758,
    "steps": {
     "2251": {
      "name": "Réponses à tout",
@@ -219,7 +219,7 @@
   },
   "1633": {
    "name": "Mort au rat !",
-   "seen": 448,
+   "seen": 495,
    "steps": {
     "2253": {
      "name": "Mort au rat !",
@@ -251,7 +251,7 @@
   },
   "1635": {
    "name": "Dans la gueule du Milimilou",
-   "seen": 653,
+   "seen": 657,
    "steps": {
     "2255": {
      "name": "Dans la gueule du Milimilou",
@@ -267,7 +267,7 @@
   },
   "1637": {
    "name": "La galette secrète",
-   "seen": 593,
+   "seen": 597,
    "steps": {
     "2257": {
      "name": "La galette secrète",
@@ -329,7 +329,7 @@
   },
   "1641": {
    "name": "Vu du ciel",
-   "seen": 231,
+   "seen": 235,
    "steps": {
     "2261": {
      "name": "Vu du ciel",
@@ -435,7 +435,7 @@
   },
   "1648": {
    "name": "Des chafers qui marchent",
-   "seen": 811,
+   "seen": 835,
    "steps": {
     "2268": {
      "name": "Des chafers qui marchent",
@@ -454,7 +454,7 @@
   },
   "1649": {
    "name": "Produits naturels",
-   "seen": 870,
+   "seen": 1044,
    "steps": {
     "2269": {
      "name": "Produits naturels",
@@ -471,7 +471,7 @@
   },
   "1650": {
    "name": "La hache et la pioche",
-   "seen": 116,
+   "seen": 122,
    "steps": {
     "2270": {
      "name": "La hache et la pioche",
@@ -486,7 +486,7 @@
   },
   "1651": {
    "name": "Boune un jour, boune toujours",
-   "seen": 21,
+   "seen": 55,
    "steps": {
     "2271": {
      "name": "Boune un jour, boune toujours",
@@ -521,7 +521,7 @@
   },
   "1958": {
    "name": "Les principes d'Archie m'aident",
-   "seen": 559,
+   "seen": 562,
    "steps": {
     "2628": {
      "name": "Les principes d'Archie m'aident",
@@ -552,7 +552,7 @@
   },
   "1973": {
    "name": "Souffre-douleur",
-   "seen": 539,
+   "seen": 868,
    "steps": {
     "2644": {
      "name": "Souffre-douleur",
@@ -579,7 +579,7 @@
   },
   "1975": {
    "name": "Ça tombe à l'eau",
-   "seen": 644,
+   "seen": 1030,
    "steps": {
     "2635": {
      "name": "Ça tombe à l'eau",
@@ -605,7 +605,7 @@
   },
   "1976": {
    "name": "Six pieds sous terre",
-   "seen": 168,
+   "seen": 271,
    "steps": {
     "2636": {
      "name": "Six pieds sous terre",
@@ -619,7 +619,7 @@
   },
   "1978": {
    "name": "Bière qui roule n'amasse pas mousse",
-   "seen": 6,
+   "seen": 9,
    "steps": {
     "2612": {
      "name": "Bière qui roule n'amasse pas mousse",
@@ -632,7 +632,7 @@
   },
   "1979": {
    "name": "Combat de rue",
-   "seen": 396,
+   "seen": 654,
    "steps": {
     "2613": {
      "name": "Combat de rue",
@@ -647,7 +647,7 @@
   },
   "1980": {
    "name": "Comme un pichon hors de l'eau",
-   "seen": 174,
+   "seen": 296,
    "steps": {
     "2614": {
      "name": "Comme un pichon hors de l'eau",
@@ -677,7 +677,7 @@
   },
   "1992": {
    "name": "Chacha Blues",
-   "seen": 460,
+   "seen": 789,
    "steps": {
     "2653": {
      "name": "Chacha Blues",
@@ -702,7 +702,7 @@
   },
   "1998": {
    "name": "Qui sème le vent récolte l'Artempeth",
-   "seen": 75,
+   "seen": 400,
    "steps": {
     "2630": {
      "name": "Qui sème le vent récolte l'Artempeth",
@@ -755,7 +755,7 @@
   },
   "2513": {
    "name": "Préparation au combat",
-   "seen": 21,
+   "seen": 29,
    "steps": {
     "3194": {
      "name": "Préparation au combat",
@@ -772,7 +772,7 @@
   },
   "2545": {
    "name": "Premiers pas",
-   "seen": 1,
+   "seen": 2,
    "steps": {
     "3226": {
      "name": "Se déplacer",
@@ -784,7 +784,7 @@
   },
   "826": {
    "name": "La fin du règne",
-   "seen": 89,
+   "seen": 104,
    "steps": {
     "1449": {
      "name": "La fin du règne",
@@ -801,7 +801,7 @@
   },
   "894": {
    "name": "Mieux vaut ne pas se fier à la première impression",
-   "seen": 142,
+   "seen": 398,
    "steps": {
     "1510": {
      "name": "Mieux vaut ne pas se fier à la première impression",
@@ -814,6 +814,26 @@
   }
  },
  "solved": {
+  "13776": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793730863,
+   "map": 190055429,
+   "monsters": [
+    922
+   ],
+   "qid": 1980
+  },
+  "13777": {
+   "count": 1,
+   "kind": "fight",
+   "last": 1793730354,
+   "map": 190055941,
+   "monsters": [
+    921
+   ],
+   "qid": 1980
+  },
   "9765": {
    "count": 2,
    "kind": "dialog",

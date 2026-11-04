@@ -11,7 +11,7 @@ h1{font-size:17px;margin:0 0 12px}h2{font-size:15px;margin:0 0 10px}
 .acc{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;border-radius:8px;cursor:pointer;border:1px solid transparent}
 .acc:hover{background:var(--card)}.acc.sel{background:var(--card);border-color:var(--line)}
 .acc small{color:var(--mut);display:block}
-button{font:inherit;padding:6px 12px;border-radius:7px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+button.fb{padding:1px 8px;font-size:12px;margin-left:4px}button{font:inherit;padding:6px 12px;border-radius:7px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
 button.p{background:var(--acc);border-color:var(--acc);color:#fff}button.d{color:var(--bad)}button:disabled{opacity:.5;cursor:default}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
@@ -71,7 +71,7 @@ async function loadList(soft){
   if(soft&&LIVE_TABS.has(tab)&&$("#char .tabs"))return;   // live tabs (journal, map, quests...) poll by themselves: re-rendering them on every disk change made the console jump
   render();
 }
-const LIVE_TABS=new Set(["console","map","quests","combat"]);
+const LIVE_TABS=new Set(["console","map","quests","combat","market","trajet"]);
 
 async function render(){
   const a=accts.find(x=>x.id===sel),m=$("#main");
@@ -101,6 +101,7 @@ async function render(){
    fiche:()=>`<div class="card"><h2>${esc(c.name||"Personnage")} ${c.level?`<span class="msg">· niveau ${esc(c.level)}</span>`:""}</h2>${bar(c.xp_pct)}
      ${info.map(r=>`<div class="row"><span>${r[0]}</span><span>${esc(r[1])}</span></div>`).join("")}</div>
     <div id="boostbox"></div>
+    <div id="chalbox"></div>
     <div class="grid">
      <div class="card"><h2>Caractéristiques</h2>${Object.entries(d.characteristics||{}).map(([g,v])=>`<p class="msg" style="margin:10px 0 2px">${esc(g)}</p>${Object.entries(v).map(([k,x])=>`<div class="row"><span>${esc(k)}</span><span>${esc(x)}</span></div>`).join("")}`).join("")||none}</div>
      <div class="card"><h2>Équipement</h2>${(d.equipment||[]).map(i=>`<div class="slot"><span class="msg">${esc(i.slot)}</span> — ${i.name?`<b>${esc(i.name)}</b>${i.level?` <span class="msg">niv. ${esc(i.level)}</span>`:""}<div class="stats">${(i.stats||[]).map(esc).join(" · ")}</div>`:"<em>vide</em>"}</div>`).join("")||none}</div></div>`,
@@ -118,14 +119,18 @@ async function render(){
   tabs.map=()=>'<div id="curmap"></div><div id="map"></div>';
   tabs.console=()=>consoleHtml(a);
   tabs.quests=()=>'<div id="qv"></div>';
+  tabs.trajet=()=>'<div id="tj"><p class="msg">Chargement…</p></div>';
+  tabs.market=()=>'<div id="mk"><p class="msg">Chargement…</p></div>';
   if(!tabs[tab])tab="fiche";
-  $("#char").innerHTML=`<div class="tabs">${[["fiche","Fiche"],["inv","Inventaire"],["jobs","Métiers"],["spells","Sorts"],["combat","Combat"],["map","Map"],["quests","Quêtes"],["console","Console"]].map(t=>`<button class="${t[0]===tab?"on":""}" data-t="${t[0]}">${t[1]}</button>`).join("")}</div>`+tabs[tab]();
+  $("#char").innerHTML=`<div class="tabs">${[["fiche","Fiche"],["inv","Inventaire"],["jobs","Métiers"],["spells","Sorts"],["combat","Combat"],["map","Map"],["quests","Quêtes"],["market","Marché"],["trajet","Trajet"],["console","Console"]].map(t=>`<button class="${t[0]===tab?"on":""}" data-t="${t[0]}">${t[1]}</button>`).join("")}</div>`+tabs[tab]();
   document.querySelectorAll(".tabs button").forEach(e=>e.onclick=()=>{tab=e.dataset.t;try{localStorage.setItem("tab",tab)}catch{};render()});
   if(tab==="combat")initCombat(a,d);
   if(tab==="map"){initCurMap(a);initMap(a,d)}
   if(tab==="console")initConsole(a);
   if(tab==="quests")refreshQuests(a);
-  if(tab==="fiche"&&!a.demo)initBoost(a);
+  if(tab==="market")initMarket(a);
+  if(tab==="trajet")initTrajet(a,d);
+  if(tab==="fiche"&&!a.demo){initBoost(a);initChallenges(a)}
   document.querySelectorAll(".subtabs button").forEach(e=>e.onclick=()=>{invCat=e.dataset.c;render()});
   const q=$("#invq");if(q){q.oninput=()=>{invQ=q.value;const pos=q.selectionStart;render().then(()=>{const n=$("#invq");n&&(n.focus(),n.setSelectionRange(pos,pos))})};}
 }
@@ -328,9 +333,158 @@ async function initBoost(a){
     try{await api(`/api/accounts/${a.id}/boost`,"POST",{weights:read(),auto:$("#bauto").checked,run:true});$("#bmsg").textContent="Répartition lancée (voir la Console).";boostSig=""}catch(e){$("#bmsg").textContent=e.message}};
 }
 
+// ---- Fight challenges (défis): XP or loot bonus, choice between the two proposed ----
+let chalSig="";
+async function initChallenges(a){
+  const box=$("#chalbox");if(!box)return;
+  let v;try{v=await api(`/api/accounts/${a.id}/challenges`)}catch{return}
+  const sig=JSON.stringify(v);if(sig===chalSig&&box.firstChild)return;chalSig=sig;
+  if(document.activeElement&&/^ch/.test(document.activeElement.id||""))return;
+  const MODE={auto:"Automatique (selon le guide et le type de combat)",xp:"Toujours l'expérience",drop:"Toujours le butin",off:"Ne rien toucher"};
+  const PUR={xp:"XP",quest:"quête",drop:"butin",hunt:"chasse",gear:"panoplie",dungeon:"donjon",boss:"boss"};
+  const bonus=b=>b==="drop"?"butin":b==="xp"?"XP":"—";
+  box.innerHTML=`<div class="card"><h2>Défis de combat <span class="badge ${v.requests_known?"connected":""}">${v.requests_known?"choix actif":"lecture seule"}</span></h2>
+   <p class="hint">Un défi est un objectif facultatif du combat : réussi, il donne un bonus d'expérience <b>ou</b> de butin. En mode automatique le robot prend le butin pour les chasses,
+    la panoplie et les donjons, l'expérience pour les quêtes, suit les consignes du guide de rush (« chall drop », « sur le boss uniquement »...) et choisit entre deux défis celui qu'il sait le mieux respecter.
+    ${v.requests_known?"":"Les requêtes d'envoi (bonus, dé, choix) ne sont pas encore apprises : le robot lit le défi et le respecte, mais n'envoie aucun choix. Lancer <code>python tools/learn_challenges.py</code> sur une capture du vrai client."}
+    ${v.table?"":"<b>Table des défis absente</b> : lancer <code>python tools/export_gamedata.py --only-challenges</code>."}</p>
+   <p><label>Bonus <select id="chmode">${v.modes.map(m=>`<option value="${m}" ${v.settings.mode===m?"selected":""}>${esc(MODE[m]||m)}</option>`).join("")}</select></label></p>
+   <p><label><input type="checkbox" id="chchoose" style="width:auto" ${v.settings.choose?"checked":""}> Choisir entre les deux défis proposés (sinon le jeu tire au sort)</label></p>
+   ${v.now.active?`<div class="row"><span>Défi du combat en cours</span><span>${esc(v.now.active)}${v.now.rule?` <span class="msg">(${esc(v.now.rule)})</span>`:""}</span></div>`:""}
+   ${v.last.length?`<table><tr><th>Heure</th><th>Combat</th><th>Bonus</th><th>Proposés</th><th>Défi</th><th>Résultat</th></tr>${v.last.map(l=>`<tr><td>${esc(new Date(l.t*1000).toLocaleTimeString("fr-FR"))}</td><td>${esc(PUR[l.purpose]||l.purpose)}</td><td>${bonus(l.bonus)}</td><td class="msg">${esc((l.proposed||[]).join(" / ")||"—")}</td><td>${esc(l.active||"—")}</td><td>${esc(l.result||"—")}</td></tr>`).join("")}</table>`:`<p class="msg">Aucun combat avec défi depuis la connexion.</p>`}
+   <p><button id="chsave">Enregistrer</button> <span class="msg" id="chmsg"></span></p></div>`;
+  $("#chsave").onclick=async()=>{try{await api(`/api/accounts/${a.id}/challenges`,"POST",{mode:$("#chmode").value,choose:$("#chchoose").checked});$("#chmsg").textContent="Enregistré.";chalSig=""}catch(e){$("#chmsg").textContent=e.message}};
+}
+
 // ---- Quests and dialogs ----
 let qSig="";
 function guideLlmEnabled(id){try{return localStorage.getItem(`guideLlm:${id}`)==="true"}catch{return false}}
+
+// ---- Market tab: prices of every resource (encyclopedia), best average, and what to farm (job or monsters) ----
+let mkQ="",mkType="",mkSrc="",mkSort="best",mkData=null;
+async function initMarket(a){
+  const box=$("#mk");if(!box)return;
+  try{if(!mkData)mkData=await api("/api/market")}catch(e){box.innerHTML=`<p class="msg">Erreur : ${esc(e.message)}</p>`;return}
+  const nf=n=>n==null?"–":Number(n).toLocaleString("fr-FR");
+  const types=[...new Set(mkData.map(r=>r.type).filter(Boolean))].sort();
+  const draw=()=>{
+    let r=mkData.filter(x=>x.best&&(!mkQ||x.name.toLowerCase().includes(mkQ.toLowerCase()))&&(!mkType||x.type===mkType)
+      &&(!mkSrc||(mkSrc==="job"?x.job:mkSrc==="mob"?x.monsters.length:(!x.job&&!x.monsters.length))));
+    r.sort((p,q)=>mkSort==="name"?p.name.localeCompare(q.name):mkSort==="vol"?(q.sold7-p.sold7):(q.best-p.best));
+    const rows=r.slice(0,300).map(x=>`<tr><td>${esc(x.name)}</td><td class="msg">${esc(x.type||"")}</td><td class="n">${esc(x.level??"")}</td>
+      <td class="n"><b>${nf(x.best)}</b> <span class="msg">(${x.window})</span></td><td class="n">${nf(x.h24)}</td><td class="n">${nf(x.d7)}</td><td class="n">${nf(x.d30)}</td>
+      <td class="n">${nf(Math.round(x.sold7/8))}</td>
+      <td>${x.job?`<b>${esc(x.job)}</b> niv. ${esc(x.level)} <button class="fb" data-k="resource" data-id="${x.gid}">Farmer</button>`:""}${x.job&&x.monsters.length?" · ":""}${x.monsters.map(m=>`${esc(m.name)} <button class="fb" data-k="monster" data-id="${m.id}">Chasser</button> <span class="msg">(niv. ${m.level[0]}${m.level[1]!==m.level[0]?"-"+m.level[1]:""}, ${Math.round(m.pct*10)/10}%${m.cond?", cond.":""})</span>`).join(", ")}</td></tr>`).join("");
+    $("#mkt").innerHTML=r.length?`<table><tr><th>Objet</th><th>Type</th><th class="n">Niv.</th><th class="n">Prix moyen</th><th class="n">24 h</th><th class="n">7 j</th><th class="n">30 j</th><th class="n">Vendus/jour</th><th>À farmer</th></tr>${rows}</table>${r.length>300?`<p class="msg">${r.length-300} autres lignes : affine le filtre.</p>`:""}`:'<p class="msg">Aucun objet.</p>';
+    $("#mkn").textContent=r.length+" objets";
+    document.querySelectorAll("#mkt .fb").forEach(b=>b.onclick=()=>openFarm(a,b.dataset.k,b.dataset.id));
+  };
+  box.innerHTML=`<div class="card"><h2>Marché <span class="msg" id="mkn"></span></h2>
+    <p class="msg">Prix moyen = moyenne des 24 h si au moins 20 ventes, sinon 7 jours, sinon 30 jours (pondérée par la quantité vendue). Prix du serveur où joue le bot.</p>
+    <div class="subtabs"><input id="mkq" placeholder="Filtrer (nom)…" value="${esc(mkQ)}">
+     <select id="mkty"><option value="">Tous les types</option>${types.map(t=>`<option ${t===mkType?"selected":""}>${esc(t)}</option>`).join("")}</select>
+     <select id="mksrc"><option value="">Toutes les sources</option><option value="job" ${mkSrc==="job"?"selected":""}>Métier (récolte)</option><option value="mob" ${mkSrc==="mob"?"selected":""}>Monstres</option><option value="none" ${mkSrc==="none"?"selected":""}>Autre</option></select>
+     <select id="mkso"><option value="best">Tri : prix moyen</option><option value="vol" ${mkSort==="vol"?"selected":""}>Tri : volume</option><option value="name" ${mkSort==="name"?"selected":""}>Tri : nom</option></select>
+     <button id="mkgo">Relever les prix</button><button id="mkrl">Actualiser</button></div><div id="mkfarm"></div><div id="mkt"></div></div>`;
+  $("#mkq").oninput=e=>{mkQ=e.target.value;draw()};$("#mkty").onchange=e=>{mkType=e.target.value;draw()};
+  $("#mksrc").onchange=e=>{mkSrc=e.target.value;draw()};$("#mkso").onchange=e=>{mkSort=e.target.value;draw()};
+  $("#mkrl").onclick=()=>{mkData=null;initMarket(a)};
+  $("#mkgo").onclick=async()=>{try{await api(`/api/accounts/${a.id}/market`,"POST",{});$("#mkgo").textContent="Relevé lancé (voir Console)"}catch(e){alert(e.message)}};
+  draw();
+}
+
+// ---- Farm route (Marché tab): preview the maps of the route of a resource / monster, start it, follow it ----
+let farmTimer=null;
+async function openFarm(a,kind,id){
+  const box=$("#mkfarm");if(!box)return;
+  box.innerHTML='<p class="msg">Calcul du trajet…</p>';
+  let r;try{r=await api(`/api/farm/route?kind=${kind}&id=${id}&acc=${encodeURIComponent(a.id)}`)}catch(e){box.innerHTML=`<p class="err">${esc(e.message)}</p>`;return}
+  const mon=kind==="monster",chip=m=>`<span style="display:inline-block;padding:2px 8px;border:1px solid var(--line);border-radius:10px;margin:2px;${m.seen?"border-color:var(--acc)":""}">[${m.x}, ${m.y}] ${esc(m.zone||"")}${m.steps!=null?` <small class="msg">${m.steps} pas</small>`:""}</span>`;
+  box.innerHTML=`<div class="card" style="margin:12px 0;border-color:var(--acc)"><h2>Trajet : ${esc(r.name)} <span class="msg">· ${mon?"monstre":"ressource"}</span></h2>
+    ${r.maps.length?`<p class="msg">${r.maps.length} carte(s), parcourues en boucle depuis la position du personnage ; le contour vert = carte où le bot l'a déjà vu${r.skipped?` · ${r.skipped} autre(s) hors de portée ignorée(s)`:""}.</p>
+      <div>${r.maps.map((m,i)=>`${i?"→ ":""}${chip(m)}`).join(" ")}</div>`
+      :`<p class="msg">Aucune carte connue pour ${esc(r.name)} : le bot explorera les cartes voisines et mémorisera où il en trouve.</p>`}
+    <div class="subtabs" style="align-items:center;margin-top:12px">
+      <label class="msg">${mon?"Combats":"Unités"} (0 = jusqu'aux pods pleins) <input id="fl" type="number" min="0" value="${mon?20:100}" style="width:90px"></label>
+      ${mon?`<label class="msg">Groupe max <input id="fg" type="number" min="1" max="8" value="4" style="width:70px"></label>`:""}
+      <button id="fgo" style="background:var(--acc);border-color:var(--acc);color:#fff">Lancer le farm</button><button id="fst2">Arrêter</button><button id="fcl">Fermer</button></div>
+    <div id="fst" class="msg"></div></div>`;
+  $("#fcl").onclick=()=>{box.innerHTML="";clearInterval(farmTimer)};
+  $("#fgo").onclick=async()=>{try{await api(`/api/accounts/${a.id}/farm`,"POST",{kind,id:Number(id),limit:Number($("#fl").value||0),max_group:Number($("#fg")?.value||4)});pollFarm(a)}catch(e){$("#fst").innerHTML=`<span class="err">${esc(e.message)}</span>`}};
+  $("#fst2").onclick=async()=>{try{await api(`/api/accounts/${a.id}/farm`,"POST",{stop:true})}catch(e){}};
+  pollFarm(a);
+}
+function pollFarm(a){
+  clearInterval(farmTimer);
+  const tick=async()=>{
+    const el=$("#fst");if(!el){clearInterval(farmTimer);return}
+    let d;try{d=await api(`/api/accounts/${a.id}/farm`)}catch{return}
+    const f=d.farm;if(!f){el.textContent="Aucun farm lancé.";return}
+    const info=(m=>m?`${m.zone||""} [${m.x}, ${m.y}]`:"")(f.maps.find(m=>m.id===f.map));
+    const st={running:"en cours",done:"terminé",stopped:"arrêté",error:"erreur"}[f.state]||f.state;
+    const mins=Math.max(1,Math.round(((f.t1||Date.now()/1000)-f.t0)/60));
+    el.innerHTML=`<b style="color:${f.state==="error"?"var(--bad)":"var(--fg)"}">${esc(f.name)} : ${st}</b> — ${f.done}${f.limit?" / "+f.limit:""} ${esc(f.unit)} en ${mins} min${f.state==="running"&&info?` · position : ${esc(info)}`:""}${f.msg?` · ${esc(f.msg)}`:""}${d.busy?` · <span class="msg">${esc(d.busy)}</span>`:""}`;
+    if(f.state!=="running")clearInterval(farmTimer);
+  };
+  tick();farmTimer=setInterval(tick,3000);
+}
+
+// ---- Trajet tab: pick a job (resource of the job level) or a monster, then its zone: shortest loop that never leaves the zone ----
+let tjKind="job",tjJob=null,tjItem=null,tjMon=null,tjMonQ="",tjZone=null,tjCat=null;
+async function initTrajet(a,d){
+  const box=$("#tj");if(!box)return;
+  try{if(!tjCat)tjCat=await api("/api/trajet/catalog")}catch(e){box.innerHTML=`<p class="err">${esc(e.message)}</p>`;return}
+  const lvlOf=j=>{const x=(d.jobs||[]).find(y=>y.name===j.name);return x?Number(x.level)||0:0};
+  box.innerHTML=`<div class="card"><h2>Trajet de farm</h2>
+    <p class="msg">Le trajet reste dans une seule zone (pas de détour par les zones voisines) et suit la boucle la plus courte entre les cartes où la cible a été vue.</p>
+    <div class="subtabs"><button data-k="job" class="${tjKind==="job"?"on":""}">Métier</button><button data-k="monster" class="${tjKind==="monster"?"on":""}">Monstre</button></div>
+    <div id="tjsel"></div><div id="tjres"></div><div id="mkfarm"></div></div>`;
+  box.querySelectorAll("[data-k]").forEach(b=>b.onclick=()=>{tjKind=b.dataset.k;tjZone=null;initTrajet(a,d)});
+  const sel=$("#tjsel");
+  if(tjKind==="job"){
+    const jobs=tjCat.jobs;if(!jobs.find(j=>j.id==tjJob))tjJob=jobs[0]?.id;
+    const j=jobs.find(x=>x.id==tjJob),lv=lvlOf(j);
+    const ok=j.resources.filter(r=>r.level<=Math.max(lv,1)),best=ok.filter(r=>r.maps).pop()||ok.pop()||j.resources[0];
+    if(!j.resources.find(r=>r.item==tjItem))tjItem=best?.item;
+    sel.innerHTML=`<div class="subtabs" style="align-items:center"><select id="tjj">${jobs.map(x=>`<option value="${x.id}" ${x.id==tjJob?"selected":""}>${esc(x.name)}${lvlOf(x)?` (niv. ${lvlOf(x)})`:""}</option>`).join("")}</select>
+      <select id="tji">${j.resources.map(r=>`<option value="${r.item}" ${r.item==tjItem?"selected":""}>${r.level<=Math.max(lv,1)?"✓ ":"🔒 "}${esc(r.name)} — niv. ${r.level}${r.maps?` · ${r.maps} carte(s) connue(s)`:" · cartes inconnues"}</option>`).join("")}</select></div>
+      <p class="msg">✓ = récoltable à ton niveau de métier${lv?"":" (niveau du métier inconnu : connecte le personnage)"}.</p>`;
+    $("#tjj").onchange=e=>{tjJob=Number(e.target.value);tjItem=null;tjZone=null;initTrajet(a,d)};
+    $("#tji").onchange=e=>{tjItem=Number(e.target.value);tjZone=null;initTrajet(a,d)};
+    if(tjItem)showTrajet(a,"resource",tjItem);
+  }else{
+    const q=tjMonQ.toLowerCase(),list=tjCat.monsters.filter(m=>!q||m.name.toLowerCase().includes(q)).slice(0,200);
+    if(!list.find(m=>m.id==tjMon))tjMon=list[0]?.id;
+    sel.innerHTML=`<div class="subtabs" style="align-items:center"><input id="tjq" placeholder="Filtrer (nom)…" value="${esc(tjMonQ)}">
+      <select id="tjm">${list.map(m=>`<option value="${m.id}" ${m.id==tjMon?"selected":""}>${esc(m.name)} — niv. ${m.level[0]}${m.level[1]!==m.level[0]?"-"+m.level[1]:""} · ${esc(m.zones.slice(0,2).join(", "))}</option>`).join("")}</select></div>`;
+    $("#tjq").onchange=e=>{tjMonQ=e.target.value;tjMon=null;tjZone=null;initTrajet(a,d)};
+    $("#tjm").onchange=e=>{tjMon=Number(e.target.value);tjZone=null;initTrajet(a,d)};
+    if(tjMon)showTrajet(a,"monster",tjMon);
+  }
+}
+async function showTrajet(a,kind,id){
+  const box=$("#tjres");box.innerHTML='<p class="msg">Calcul du trajet…</p>';
+  let r;try{r=await api(`/api/farm/route?kind=${kind}&id=${id}&acc=${encodeURIComponent(a.id)}${tjZone!=null?"&zone="+tjZone:""}`)}catch(e){box.innerHTML=`<p class="err">${esc(e.message)}</p>`;return}
+  const mon=kind==="monster",z=r.zone;
+  const chip=m=>`<span style="display:inline-block;padding:2px 8px;border:1px solid var(--line);border-radius:10px;margin:2px;${m.seen?"border-color:var(--acc)":""}">[${m.x}, ${m.y}]</span>`;
+  box.innerHTML=!z?`<p class="msg">Aucune zone connue pour ${esc(r.name)} : le bot explorera et mémorisera (le recensement des ressources se remplit à chaque carte visitée).</p>`:
+   `<div class="subtabs" style="align-items:center"><label class="msg">Zone <select id="tjz">${r.zones.map(e=>`<option value="${e.id}" ${e.id===z.id?"selected":""}>${esc(e.name||e.id)} (${esc(e.area||"")}) · ${e.maps} carte(s), ${e.known} vue(s)</option>`).join("")}</select></label></div>
+    <p><b>${esc(r.name)}</b> · ${esc(z.name)} — ${r.maps.length} carte(s), boucle de <b>${r.loop}</b> pas${r.outside?` · <span class="msg">${r.to_zone!=null?r.to_zone+" pas pour rejoindre la zone":"zone non reliée à ta position"}</span>`:""}${r.skipped?` · <span class="msg">${r.skipped} carte(s) de la zone inaccessibles sans la quitter, ignorées</span>`:""}</p>
+    <p class="msg">${r.weight?`Pods : ${r.weight} par unité${r.per_trip!=null?` → environ <b>${r.per_trip}</b> unités avant que le sac soit plein`:""}. `:""}${r.bank?`Banque connue : ${esc(r.bank.zone||"")} [${r.bank.x}, ${r.bank.y}], à ${r.bank.steps} pas de la zone.`:"Aucune banque connue (mémorisée quand un banquier est rencontré)."}</p>
+    <p class="msg">Contour vert = cible déjà vue à cet endroit ; les autres cartes viennent des données de zone${mon?"":" ou du recensement"}.</p>
+    <div>${r.maps.map((m,i)=>`${i?"→ ":""}${chip(m)}`).join(" ")}${r.maps.length>1?" ↺":""}</div>
+    <div class="subtabs" style="align-items:center;margin-top:12px">
+      <label class="msg">${mon?"Combats":"Unités"} (0 = jusqu'aux pods pleins) <input id="fl" type="number" min="0" value="${mon?20:100}" style="width:90px"></label>
+      ${mon?`<label class="msg">Groupe max <input id="fg" type="number" min="1" max="8" value="4" style="width:70px"></label>`:""}
+      <label class="msg"><input type="checkbox" id="fbk" style="width:auto" ${r.bank?"checked":""}> Vider en banque quand les pods sont pleins</label>
+      <button id="fgo" style="background:var(--acc);border-color:var(--acc);color:#fff">Lancer le farm</button><button id="fst2">Arrêter</button></div><div id="fst" class="msg"></div>`;
+  if(!z)return;
+  $("#tjz").onchange=e=>{tjZone=Number(e.target.value);showTrajet(a,kind,id)};
+  $("#fgo").onclick=async()=>{try{await api(`/api/accounts/${a.id}/farm`,"POST",{kind,id:Number(id),zone:z.id,bank:$("#fbk").checked,limit:Number($("#fl").value||0),max_group:Number($("#fg")?.value||4)});pollFarm(a)}catch(e){$("#fst").innerHTML=`<span class="err">${esc(e.message)}</span>`}};
+  $("#fst2").onclick=async()=>{try{await api(`/api/accounts/${a.id}/farm`,"POST",{stop:true})}catch(e){}};
+  pollFarm(a);
+}
+
 async function refreshQuests(a){
   const box=$("#qv");if(!box)return;
   if(a.demo){box.innerHTML='<div class="card"><h2>Quêtes</h2><p class="msg">Le compte de démonstration n\'a pas de quêtes en direct.</p></div>';return}

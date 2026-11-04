@@ -136,3 +136,25 @@ Bundles Unity `Dofus_Data/StreamingAssets/Content/Data/*.asset.bundle` + textes 
 - **Achat à un PNJ** : un simple dialogue (`ilt`, `iky`) dont une réponse nomme l'objet (« Prendre un lailait bien frais pour 4 kamas ») ; l'objet arrive par `iqx`.
 - **Relief et zones** : cf. `gamemaps.can_step`. **Cases de ressources** : `jnj` champ 2 `{3: élément, 4: case}` (portes et ateliers n'y figurent pas).
 - **Guides scrapés** (`knowledge/dpln_quests.json`) : le bot y lit le PNJ de départ, les monstres qui lâchent un objet (« se drop sur le Tofu Chimérique ») et les vendeurs.
+
+## Défis de combat (`client/challenges.py`, `tools/learn_challenges.py`, `fightai.Rules`) — lecture serveur NON vérifiée en jeu, requêtes à apprendre
+- **Données** : table `challenges` du jeu (`tools/export_gamedata.py [--only-challenges]` -> `gamedata.json`, 842 lignes). L'id de la ligne est ce que le serveur envoie ; `completionCriterion` est le mini-langage du jeu
+  (`TM=1,0` Zombie, `Tm<1,0` Statue, `TD<2,hc0,e1` Hardi, `TD>1,hc0,e1` Prudent, `SF=1` Focus, `SAt0` Versatile, `Ma=1` scripté...). Catégorie 1 = les 43 défis génériques ; 3 / 9 / 4 / 17 = variantes par monstre ou boss
+  de donjon (Duo, Trio, scriptés), que le bot ne sait pas honorer.
+- **Mécanique** : en phase de placement, chaque joueur choisit le bonus (XP **ou** butin, même pourcentage) et laisse le serveur tirer un défi (dé activé) ou, dé désactivé, choisit un défi parmi DEUX proposés ; les préférences
+  sont gardées d'un combat à l'autre ; le bonus n'est donné que si le défi réussit. En solo les défis qui parlent des relations entre alliés (Duel, Partage, Chacun son monstre, Misanthrope, Survivant) sont gratuits.
+- **Messages** (structure lue dans le protocole décompilé d'un autre projet, un build plus ancien ; les NOMS obfusqués de ce build sont inconnus, les champs sont à confirmer) :
+  serveur : proposition `{1: minuterie, 2: Challenge x n}`, défi choisi / ajouté `{1: Challenge}`, liste `{1: Challenge x n}`, résultat `{1: réussi, 2: id du défi}` (réussi absent = échoué), énumérations de confirmation `{1: n}`.
+  `Challenge = {1: état 0 en cours / 1 réussi / 2 perdu, 2: cibles [{1: ids packés, 2: id, 3: genre}], 3: id du défi, 4: bonus XP %, 5: bonus butin %}`.
+  client : bonus `{1: énum}`, dé `{1: énum}`, choisir `{1: id du défi}`, valider `{1: id du défi}` (+ un « prêt » avec énum). Les valeurs des énums (butin = ? XP = ? dé éteint = ?) sont à apprendre.
+- **Lecture par la forme** (`challenges.sniff`) : les noms changent à chaque build mais pas la structure ; le bot regarde les messages INCONNUS pendant 45 s après chaque chargement de carte. Lecture stricte (types des champs,
+  id présent dans la table, bonus réaliste 1-400 %, ids distincts) : une lecture laxiste prenait 5 messages ordinaires de chaque combat (`ktm`, `ktl`, `kjl`, `kth`, `ite`) pour des défis ; la version actuelle donne
+  0 faux positif sur les 257 540 messages serveur des 267 combats enregistrés dans `fights/` (aucun de ces combats n'avait de défi). Le premier vrai défi vu est journalisé (« Défis : message « xyz » = propositions : ... »)
+  et son nom est gardé dans l'en-tête du fichier de `fights/`.
+- **Requêtes** : leurs noms et les valeurs des énums s'apprennent UNE fois avec `python tools/learn_challenges.py capture.pcapng` (capture du vrai client pendant un combat à défi : cliquer butin, XP, dé, premier défi, second défi,
+  valider, prêt) -> `knowledge/challenge_msgs.json`. Tant que ce fichier manque, le bot lit le défi et le respecte mais n'envoie aucun choix.
+- **Politique** (`challenges.decide` / `choose`) : bonus = butin pour les chasses d'objet, la panoplie, les donjons et les boss ; XP pour les quêtes ; surchargé par le texte de l'étape du guide (« chall drop », « challenge xp »,
+  « sur le boss uniquement ») et par le réglage du compte (`%APPDATA%/dofus_net/challenges.json` : `mode` auto / xp / drop / off, `choose`). Entre deux défis : bonus % x chance que l'IA le respecte ; un défi cité par le guide passe avant.
+- **Respect des défis par l'IA** (`fightai.Rules`, `fightbot._rule_moves`) : Zombie (exactement 1 PM), Nomade (tous les PM), Statue (aucun déplacement), Hardi / Prudent (fin de tour au contact / hors contact), Versatile (un lancer par sort et par tour),
+  Focus (un ennemi à la fois, sorts de zone sur un seul ennemi). Les autres défis génériques ne sont pas honorés (Premier, Dernier... sont gratuits face à un seul monstre) ; la tactique de boss (4 ennemis et plus) ignore les règles de position.
+- Vérifié hors ligne seulement : 50 tests (`python -m unittest discover -s tests`), plateaux synthétiques pour le planificateur, session factice pour `fightbot`. Rien n'a encore été joué contre le serveur.

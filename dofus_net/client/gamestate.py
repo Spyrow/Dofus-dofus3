@@ -149,6 +149,9 @@ def inventory_items(body, single=False):
     for f, v in parse(body):
         if f == 2 and isinstance(v, bytes):
             out.append(_item(v))
+    if not single and any(it["position"] not in (None, NOT_EQUIPPED) for it in out):      # the login inventory: protobuf leaves out a position equal to 0, so the item with none is the one worn in slot 0 (the amulet)
+        for it in out:
+            if it["position"] is None: it["position"] = 0
     return out
 
 

@@ -26,6 +26,7 @@ ILX, ILF, KIS = "ilx", "ilf", "kis"   # dialog opened / next dialog step (replie
 ICA, ICJ, ICB, IBG = "ica", "icj", "icb", "ibg"   # quest lists at login / quest state / quest changed / objective done
 JOK, JNY, JOC, JNZ, JNJ = "jok", "jny", "joc", "jnz", "jnj"   # move (path keys + map id), movement done, change map (neighbour id), actor path, map actors   # izn = last message of the character-selection burst; jow = map to load
 # requests the real client sends once the character is selected, ending with kkc (= world loaded, server then pushes the map)
+LOK, LPJ = "lok", "lpj"   # the server's time-sync ({1: server time ms, 2: 60}) / the real client's empty answer, sent 100 ms after the lok that follows kkc; unanswered, the server repeats lok every 5 s and hangs up after ~7 min
 READY = [("lnt", f_varint(1, 1)), ("kne", f_varint(2, 1)), ("kkn", b""), ("kkt", b""), ("klu", b""), ("klx", b""), ("kmj", b""),
          ("jgm", f_varint(1, 3)), ("jgm", b""), ("jcy", b""), ("kkc", b"")]
 
@@ -82,7 +83,7 @@ def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, ent
     c = GameConn(host, PORT); c.s.settimeout(1.0)
     if on_ready: on_ready(c)
     c.send(request(KNC, f_bytes(1, ticket) + f_bytes(2, "fr"))); log("action", "→ knc (ticket)")
-    char_id = None; sent_kod = False; first_jow = True; pending_jow = None; saw_jvl = False; in_fight_login = False; creating = None; name_tries = 0; created_name = None
+    world_loaded = False; lpj_sent = 0; char_id = None; sent_kod = False; first_jow = True; pending_jow = None; saw_jvl = False; in_fight_login = False; creating = None; name_tries = 0; created_name = None
     while True:
         now = time.time()
         if pending_jow and now - pending_jow[1] >= 1.2:      # capture of a reconnection inside a fight: the client waits ~1.9 s, then igk + kjt (no jpe) and the server pushes the fight state
@@ -98,15 +99,19 @@ def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, ent
                 break
             continue
         except Exception as e:
-            log("warn", f"Connexion fermée : {e}")
+            log("warn", f"Connexion fermée : {e} (ouverte depuis {time.time() - t0:.0f} s, dernier message du serveur il y a {time.time() - last_rx:.1f} s)")
             if not quiet: print("recv:", e)
             break
         last_rx = time.time()
         if collect is not None: collect.append((t, body))
         if on_message: on_message(t, body)
         if not quiet: print(t, len(body))
+        if t == LOK and world_loaded:
+            c.send(request(LPJ)); lpj_sent += 1
+            log("action", f"→ lpj (réponse au lok n° {lpj_sent}, connexion ouverte depuis {time.time() - t0:.0f} s)")
         if t == IZN and enter_map and enter:
             for name, b in READY: c.send(request(name, b))
+            world_loaded = True
             log("action", "→ requêtes « monde chargé » (lnt … kkc)")
         elif t == JOW and enter_map:   # ack the map load like the client (kjt + jpe)
             mid = next((v for f, v in parse(body) if f == 1 and isinstance(v, int)), None)
@@ -127,7 +132,8 @@ def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, ent
             if sub is not None: char_id = _field_varint(sub, 3)
             chars = _characters(body)
             if create is not None and not create.get("done") and creating is None:     # a character was asked for: create it like the client (random name, then kru)
-                creating = "name"; c.send(request(KTB)); log("action", "→ ktb (nom aléatoire pour le nouveau personnage)")
+                creating = "after_kod" if not sent_kod else "name"      # the name request goes out after the DH exchange (kod), as the client does
+                if creating == "name": c.send(request(KTB)); log("action", "→ ktb (nom aléatoire pour le nouveau personnage)")
             elif creating == "sent" and chars:      # the creation worked: the client then selects the new character with ksl
                 cid = next((i for i, n in chars if n == created_name), chars[0][0]); char_id = cid; creating = "done"
                 c.send(request(KSL, f_varint(1, cid) + f_varint(3, 1))); log("action", f"→ ksl (sélection du personnage créé {cid})")
@@ -135,6 +141,7 @@ def game_step(ticket, host, enter=False, idle=15, collect=None, quiet=False, ent
                 c.send(request("ksu")); log("action", "→ ksu (reprise du personnage en combat)")
         elif t == JPX and not sent_kod:
             kod, _a = make_kod(); c.send(request(KOD, f_bytes(1, kod), req_id=2)); sent_kod = True; log("action", "→ kod (échange DH)")
+            if creating == "after_kod": creating = "name"; c.send(request(KTB)); log("action", "→ ktb (nom aléatoire pour le nouveau personnage, après kod)")
             if enter and char_id and not in_fight_login and not (create is not None and not create.get("done")): c.send(request(KTA, f_varint(1, char_id))); log("action", f"→ kta (sélection du personnage {char_id})")
     return c
 
