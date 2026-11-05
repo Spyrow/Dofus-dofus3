@@ -158,3 +158,20 @@ Bundles Unity `Dofus_Data/StreamingAssets/Content/Data/*.asset.bundle` + textes 
 - **Respect des défis par l'IA** (`fightai.Rules`, `fightbot._rule_moves`) : Zombie (exactement 1 PM), Nomade (tous les PM), Statue (aucun déplacement), Hardi / Prudent (fin de tour au contact / hors contact), Versatile (un lancer par sort et par tour),
   Focus (un ennemi à la fois, sorts de zone sur un seul ennemi). Les autres défis génériques ne sont pas honorés (Premier, Dernier... sont gratuits face à un seul monstre) ; la tactique de boss (4 ennemis et plus) ignore les règles de position.
 - Vérifié hors ligne seulement : 50 tests (`python -m unittest discover -s tests`), plateaux synthétiques pour le planificateur, session factice pour `fightbot`. Rien n'a encore été joué contre le serveur.
+
+## Banque (capture du 2026-11-04, Banque d'Astrub [4, -18], carte 192415750, banquier = acteur -20001)
+- Ouverture : dialogue normal avec le banquier (`ilt {1: 3, 2: carte, 3: acteur}` -> `ilf` avec 2 réponses, `iky {1: 64361}` choisit « accéder au coffre ») -> `irp`, `kis`, `jyf {1: 15, 2: max}` = coffre ouvert.
+- Dépôt d'une pile : `jyk {1: uid de la pile en varint, emballé (bytes)}` (même uid que `irl`/`iqx`) -> `iru {1: idem}` (la pile quitte le sac), `iqq {1: pods, 2: pods max}`, `itn {1: {1: {3: quantité, 4: objet, 5: uid}, 4: 63}}` (pile en banque). La pile entière part (pas de quantité).
+- Retrait : `kbp {1: uid}` -> `isl {2: uid}`, `iqq`, `isg {1: {1: {3, 4, 5}, 4: 63}}` (la pile revient dans le sac).
+- Kamas : `jyj {1: montant}` dépose, `jyj {1: -montant}` retire -> `ita`, `ith {2: kamas du personnage}`.
+- Fermeture : `kiq` -> `kbr {1: 11}`. Implémenté : `GameSession.bank_deposit` (dépôt de toutes les piles de ressources, vérifié seulement contre la capture, pas encore en jeu).
+
+## Forgemagie (FM) — `client/forgemagie.py`
+
+Rules from https://huzounet.fr/guides/forgemagie as tested code (`tests/test_forgemagie.py`): rune table (base +1 / PA +3 / RA +10, density = points x stat weight), reliquat accounting
+(guide example: PA INE makes Invocation fall -> 27), outcome classification (crit / neutral / fail), exotic rule (rune > 20 on an absent stat: 1 % crit, no neutral), over / exo limit
+(density 101), transcendance conditions, item kinds (concession / puits / brisage), rune choice and `advise()`.
+LEARNING: every rune goes through `forgemagie.observe(...)` into `knowledge/fm_journal.json` (counts per situation: rune, stat present, item weight and stat buckets of 25 %); `estimate()` blends
+those counts with the guide's prior, so the advisor improves with volume. NOT DONE: the wire messages that place a rune / read the new jet (no FM capture exists), and the max stats of an item
+(gamedata.json has no item effects: they must come from the inventory messages or the client's item sheet). Next step: capture a real FM session (scan_connect.py, a few runes on a cheap item), write
+tools/learn_fm.py like learn_challenges.py.

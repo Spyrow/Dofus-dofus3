@@ -84,7 +84,7 @@ class Fight:
     def reset(self):
         self.started, self.over, self.my_turn, self.cast_evt = (threading.Event() for _ in range(4))
         self.jvj_me = False; self.dead = set(); self.casts = {}
-        self.tpl, self.hp, self.pm, self.mutilated = {}, {}, {}, False      # fighter -> monster template / life / MP; Mutilation already cast this fight
+        self.tpl, self.hp, self.pm, self.mutilated = {}, {}, {}, False; self.kite_focus = None      # fighter -> monster template / life / MP; Mutilation already cast this fight
         self.master, self.res, self.hp_max, self.my_hp, self.turn_no = {}, {}, {}, None, 0; self.mem.new_fight()
         self.focus = None; self.mp_spent = 0      # Focus challenge: the enemy being attacked; movement points spent in this turn
         self.last_message_at = 0.0; self.ap_err = None      # ap_err: (AP I have, AP the spell needs, time) from the server's "not enough AP" answer
@@ -343,42 +343,43 @@ class Fight:
         return ok
 
     def _kite_turn(self, ap, mp, mut, stase):
+        """Turn 1: Mutilation, then every turn Epee Vorace (1-3 cells, 3 PA) -- Stase (1-5) when it is out of reach -- always on the SAME monster
+        (self.kite_focus: the nearest one at first, kept until the server announces its death), walking up to it with the MP left."""
         s = self.s; say = lambda m: s.log("action", "Combat : " + m)
-        stase_casts = 0; skipped = set()
-        for _ in range(12):
+        sword = next((sp for sp in self._spells() if sp["name"].casefold().startswith("épée vorace")), None)
+        skipped = set(); casts = {}
+        for _ in range(14):
             with s._lock: me = s.my_cell
             enemies = self._enemy_cells()
             if me is None or not enemies or self.over.is_set(): return
-            m = s.mapdata(); boss = self._boss(enemies)
+            m = s.mapdata()
             blocked = {c for a, c in s.actors.items() if a != s.char_id}
             # 1. Mutilation once per fight (casting it again would remove it)
             if not self.mutilated and ap >= mut["ap"]:
                 self.mutilated = True
                 if self._cast(mut, me, say): ap -= mut["ap"]
                 continue
-            # 2. Stase on the boss when it is in range, else on the nearest enemy that is
-            can = ap >= stase["ap"] and stase_casts < (stase["per_turn"] or 9)
-            if can:
-                targets = sorted(enemies, key=lambda a: (a != boss, dist(me, enemies[a])))
-                tgt = next((a for a in targets if (a, stase["id"]) not in skipped and stase["min"] <= dist(me, enemies[a]) <= stase["max"] and los_clear(m, me, enemies[a])), None)
-                if tgt is not None:
-                    if self._cast(stase, enemies[tgt], say, " (boss)" if tgt == boss else ""): ap -= stase["ap"]; stase_casts += 1
-                    else: skipped.add((tgt, stase["id"]))
-                    continue
-                # nobody in range: get into range of the boss (but out of the others' reach if possible)
-                if mp > 0:
-                    best = self._best_cell(me, mp, enemies, blocked, m, boss, (stase["min"], stase["max"]))
-                    if best and best[2][-1] != me and len(best[2]) > 1:
-                        self._move(best[2], say, "approche du boss à portée de Stase"); mp -= len(best[2]) - 1; continue
-            break
-        # 3. run away with the movement points left (the monsters have to come to us)
-        with s._lock: me = s.my_cell
-        enemies = self._enemy_cells()
-        if mp > 0 and me is not None and enemies and not self.over.is_set():
-            m = s.mapdata(); boss = self._boss(enemies); blocked = {c for a, c in s.actors.items() if a != s.char_id}
-            best = self._best_cell(me, mp, enemies, blocked, m, boss, (stase["min"], stase["max"]))
-            if best and len(best[2]) > 1 and best[0][0] >= -self._threat(me, enemies):
-                self._move(best[2], say, f"fuite ({self._threat(me, enemies)} ennemi(s) à portée, {-best[0][0]} après la fuite)")
+            # 2. the focus: the same monster until it dies
+            if self.kite_focus not in enemies: self.kite_focus = min(enemies, key=lambda a: (dist(me, enemies[a]), a)); say(f"cible unique : {self.kite_focus}")
+            tgt = self.kite_focus; tc = enemies[tgt]
+            for sp in [x for x in (sword, stase) if x]:
+                if ap >= sp["ap"] and (not sp["per_turn"] or casts.get(sp["id"], 0) < sp["per_turn"]) and (tgt, sp["id"]) not in skipped                         and sp["min"] <= dist(me, tc) <= sp["max"] and los_clear(m, me, tc):
+                    if self._cast(sp, tc, say, f" (cible unique {tgt})"): ap -= sp["ap"]; casts[sp["id"]] = casts.get(sp["id"], 0) + 1
+                    else: skipped.add((tgt, sp["id"]))
+                    break
+            else:
+                # out of reach: walk toward the focus (diagonal steps), stopping as soon as a spell reaches it
+                if mp <= 0 or ap < min(x["ap"] for x in (sword, stase) if x): return
+                reach = max(x["max"] for x in (sword, stase) if x)
+                path = gamemaps.find_path(m, me, tc, blocked, diagonals_only=True)
+                steps = []
+                for c in (path or [])[1:-1][:mp]:
+                    steps.append(c)
+                    if dist(c, tc) <= max(1, min(reach, 3)) and los_clear(m, c, tc): break
+                if not steps: return
+                try: self._move([me] + steps, say, f"approche de la cible {tgt}")
+                except RuntimeError as e: say(f"déplacement refusé ({e})"); return
+                mp -= len(steps)
 
     # ---- planner (fightai) ----
     def _board(self, ap, mp):
@@ -524,7 +525,8 @@ class Fight:
         say(f"mon tour ({ap} PA, {mp} PM)")
         mut, stase = self._kite_spells()
         n_enemies = len(self._enemy_cells())
-        if mut and stase and n_enemies >= self.KITE_MIN_ENEMIES:
+        dungeon = getattr(getattr(self, "ctx", None), "purpose", None) == "dungeon"      # in a dungeon room: focus one monster at a time to the very end
+        if mut and stase and (n_enemies >= self.KITE_MIN_ENEMIES or dungeon):
             say(f"tactique du boss : {n_enemies} ennemis, Mutilation puis Stase à distance puis fuite")
             return self._kite_turn(ap, mp, mut, stase)
         if AI_ENABLED:

@@ -104,7 +104,7 @@ async function render(){
     <div id="chalbox"></div>
     <div class="grid">
      <div class="card"><h2>Caractéristiques</h2>${Object.entries(d.characteristics||{}).map(([g,v])=>`<p class="msg" style="margin:10px 0 2px">${esc(g)}</p>${Object.entries(v).map(([k,x])=>`<div class="row"><span>${esc(k)}</span><span>${esc(x)}</span></div>`).join("")}`).join("")||none}</div>
-     <div class="card"><h2>Équipement</h2>${(d.equipment||[]).map(i=>`<div class="slot"><span class="msg">${esc(i.slot)}</span> — ${i.name?`<b>${esc(i.name)}</b>${i.level?` <span class="msg">niv. ${esc(i.level)}</span>`:""}<div class="stats">${(i.stats||[]).map(esc).join(" · ")}</div>`:"<em>vide</em>"}</div>`).join("")||none}</div></div>`,
+     <div class="card"><h2>Équipement</h2>${(d.equipment||[]).map(i=>`<div class="slot"><span class="msg">${esc(i.slot)}</span> — ${i.name?`<b>${esc(i.name)}</b>${i.level?` <span class="msg">niv. ${esc(i.level)}</span>`:""}<div class="stats">${(i.stats||[]).map(esc).join(" · ")}</div>`:"<em>vide</em>"}</div>`).join("")||none}</div></div>${tabs.jobs()}${tabs.spells()}`,
    inv:()=>{
      const inv=d.inventory||{},items=(inv.items||[]).filter(i=>!invQ||(i.name+" "+(i.type||"")).toLowerCase().includes(invQ.toLowerCase()));
      const CATS=[["equipement","Équipements"],["ressource","Ressources"],["consommable","Consommables"],["quete","Objets de quête"]];
@@ -121,8 +121,8 @@ async function render(){
   tabs.quests=()=>'<div id="qv"></div>';
   tabs.trajet=()=>'<div id="tj"><p class="msg">Chargement…</p></div>';
   tabs.market=()=>'<div id="mk"><p class="msg">Chargement…</p></div>';
-  if(!tabs[tab])tab="fiche";
-  $("#char").innerHTML=`<div class="tabs">${[["fiche","Fiche"],["inv","Inventaire"],["jobs","Métiers"],["spells","Sorts"],["combat","Combat"],["map","Map"],["quests","Quêtes"],["market","Marché"],["trajet","Trajet"],["console","Console"]].map(t=>`<button class="${t[0]===tab?"on":""}" data-t="${t[0]}">${t[1]}</button>`).join("")}</div>`+tabs[tab]();
+  if(!tabs[tab]||tab=="jobs"||tab=="spells")tab="fiche";
+  $("#char").innerHTML=`<div class="tabs">${[["fiche","Personnage"],["inv","Inventaire"],["combat","Combat"],["map","Map"],["quests","Quêtes"],["market","Marché"],["trajet","Trajet"],["console","Console"]].map(t=>`<button class="${t[0]===tab?"on":""}" data-t="${t[0]}">${t[1]}</button>`).join("")}</div>`+tabs[tab]();
   document.querySelectorAll(".tabs button").forEach(e=>e.onclick=()=>{tab=e.dataset.t;try{localStorage.setItem("tab",tab)}catch{};render()});
   if(tab==="combat")initCombat(a,d);
   if(tab==="map"){initCurMap(a);initMap(a,d)}

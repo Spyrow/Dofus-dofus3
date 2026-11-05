@@ -44,12 +44,12 @@ MAX_DEFEATS = 3                     # defeats allowed in one autopilot run befor
 MAX_ATTEMPTS = 3
 FIGHT_REPLY = re.compile(r"combat|affront|battr|d[ée]fi|attaqu|[ée]prouve|provoqu", re.I)   # replies that start a boss fight
 FIGHT_ATTEMPTS = 8        # fights allowed per objective (an objective may need several)
-DUNGEON_WORDS = ("crypte", "tombeau", "donjon")
+DUNGEON_WORDS = ("crypte", "tombeau", "donjon", "grange")
 MAX_LLM_STEPS = 12         # actions suggested by the guide per run
 MAX_SEARCH_MAPS = 25      # maps visited while looking for monsters
 REST_SECONDS = 8          # pause between two fights
 MAX_TRAVEL_STEPS = 80
-REFRESH_AFTER = 300      # seconds after which the autopilot renews the game connection between two objectives
+REFRESH_AFTER = None      # connection renewal removed (see Autopilot._refresh_connection)
 HELP_WAIT = 300      # seconds the autopilot waits for the user when it cannot find an exit
 # replies that end or refuse a conversation; the autopilot prefers any other reply (the first one), and falls back to the first reply
 REFUSE = re.compile(r"renonc|refus|(?:dois|dois bien|vais|faut) partir|partir (?:maintenant|plus tard|sans)|rester|quitter|s'en aller|laisser|abandon|fuir|pas int[ée]ress|plus tard|non,|saluer", re.I)
@@ -388,10 +388,6 @@ class Autopilot:
                             try: self._act("Reprise du combat", self.s._do_resume_fight)
                             except RuntimeError as e: self.say("warn", f"combat impossible : {e}"); raise DesyncError("combat fantôme retenu par le serveur")      # the server holds the fight for minutes: reconnect (with long pauses) instead of stopping
                             time.sleep(REST_SECONDS); continue
-                        if self.s.status == "connected" and self.s.since and time.time() - self.s.since > REFRESH_AFTER and not self.s.in_fight:      # the server hangs up every ~6-8 min (cause unknown): renew the connection here, between two objectives, rather than in the middle of a fight (it then keeps the character for minutes)
-                            self.say("info", f"connexion ouverte depuis {int(time.time() - self.s.since)} s : je la renouvelle avant la coupure du serveur")
-                            if not self.s.reconnect(): raise DesyncError("renouvellement de la connexion impossible")
-                            continue
                         if self.s.map_id in tutorial.MAPS and tutorial.step(self): continue      # a new character starts in the tutorial
                         if self.s.dialog: self._dialog(); continue
                         if self._dungeon_step(): continue
@@ -572,6 +568,55 @@ class Autopilot:
                     return None, True
                 self._guided_progress(n)
             return None, True
+        if kind == "dungeon":
+            norm = guideorder.norm
+            inf = gamedata.map_info(self.s.map_id) if self.s.map_id else None
+            inside = bool(inf and inf["subarea"] and norm(st["subarea"]) in norm(inf["subarea"]))
+            if inside:
+                if self._guided_dip != "in": self._guided_dip = "in"; self.say("event", f"guide de rush : entré dans « {inf['subarea']} »")
+                xa = next((a for i in st.get("exit_npc_ids", []) for a in [self._find_npc(i)] if a is not None), None)
+                if xa is not None:      # the boss (Kardorim) lets the player out with a reply
+                    try:
+                        self._act(f"Parler au PNJ {xa}", lambda: self.s._do_talk(xa))
+                        dlg = self.s.dialog; reps = dlg.get("replies", []) if dlg else []
+                        pick = next((r for r in reps if any(w in (r["text"] or "").casefold() for w in st["exit_words"])), None)
+                        if pick is None:
+                            self.say("warn", f"guide de rush : aucune réponse avec {st['exit_words']} parmi {[r['text'][:60] for r in reps]}"); self.s.close_dialog(); self._guided_fail[n] += 1
+                        else: self.say("info", f"guide de rush : réponse « {pick['text']} »"); self._act(f"Répondre ({pick['id']})", lambda: self.s._do_reply(pick["id"]))
+                    except RuntimeError as e: self.say("warn", f"guide de rush : {e}"); self._guided_fail[n] += 1
+                    if self._guided_fail[n] >= 4: return self._guided_halt(st, "Kardorim ne me laisse pas sortir")
+                    self._sleep(2.5); return None, True
+                ok = self.s.probe_doors()      # no monster group left in this room (the fights are _dungeon_step's): the way on / out is a door
+                if not ok:
+                    self._guided_fail[(n, self.s.map_id)] += 1
+                    if self._guided_fail[(n, self.s.map_id)] >= 4: return self._guided_halt(st, f"je ne trouve pas la suite dans « {inf['name']} » (carte {self.s.map_id})")
+                return None, True
+            if self._guided_dip == "in": self._guided_dip = None; self._guided_progress(n); self.say("event", "guide de rush : donjon terminé, je suis ressorti"); return None, True
+            if self.s.map_id != st["entry"]:
+                if not self._travel(st["entry"]):
+                    self._guided_fail[n] += 1
+                    if self._guided_fail[n] >= 3: return self._guided_halt(st, f"carte d'entrée {st['entry']} inaccessible")
+                return None, True
+            actor = next((a for i in st.get("npc_ids", []) for a in [self._find_npc(i)] if a is not None), None)
+            if actor is not None:      # the gatekeeper (Klasmor) opens the crypt with a reply
+                try:
+                    self._act(f"Parler au PNJ {actor}", lambda: self.s._do_talk(actor))
+                    for _ in range(6):
+                        dlg = self.s.dialog
+                        if not dlg: break
+                        reps = dlg.get("replies", [])
+                        pick = next((r for r in reps if any(w in (r["text"] or "").casefold() for w in st["words"])), None)
+                        if pick is None:
+                            self.say("warn", f"guide de rush : aucune réponse avec {st['words']} parmi {[r['text'][:60] for r in reps]}"); self.s.close_dialog(); self._guided_fail[n] += 1; break
+                        self.say("info", f"guide de rush : réponse « {pick['text']} »"); self._act(f"Répondre ({pick['id']})", lambda: self.s._do_reply(pick["id"])); time.sleep(1.5)
+                except RuntimeError as e: self.say("warn", f"guide de rush : {e}"); self._guided_fail[n] += 1
+                if self._guided_fail[n] >= 3: return self._guided_halt(st, "le gardien de la crypte ne répond pas comme prévu")
+                self._sleep(2.5); return None, True
+            self.say("info", f"guide de rush : je cherche la porte de « {st['subarea']} » sur la carte {st['entry']}")
+            if not self.s.probe_doors():
+                self._guided_fail[n] += 1
+                if self._guided_fail[n] >= 3: return self._guided_halt(st, f"porte de « {st['subarea']} » introuvable")
+            return None, True
         if kind == "dip":
             inf = gamedata.map_info(self.s.map_id) if self.s.map_id else None
             inside = bool(inf and inf["subarea"] and guideorder.norm(st["subarea"]) in guideorder.norm(inf["subarea"]))
@@ -712,12 +757,14 @@ class Autopilot:
             self._guided_fail[n] += 1       # a chain quest: it starts by itself when the previous one ends
             if self._guided_fail[n] >= 4: return self._guided_halt(st, f"« {name} » n'est pas apparue toute seule")
             time.sleep(3); return None, True
+        if st.get("accept"): self.say("info", f"guide de rush : « {name} » acceptée (ses objectifs sont les quêtes des étapes suivantes)"); self._guided_progress(n); return None, True
         obj, why = self._pick(any_world=True, only={qid})
         if obj is None:
             try: self.s.sync_quests()
             except Exception: pass
             with self.s._lock: gone = qid not in self.s.quests
             if gone: return None, True
+            if "aucune route" in (why or "") and self.s.probe_doors(): self.say("info", "guide de rush : pas de route connue — j'ai essayé les portes de cette carte"); return None, True      # stuck in a closed place (a class temple): its exit is a door to learn
             self._guided_fail[n] += 1
             if self._guided_fail[n] >= 6: return self._guided_halt(st, f"« {name} » bloquée : {why}")
             return None, True
@@ -738,6 +785,10 @@ class Autopilot:
         self.say("info", f"guide de rush : je vais parler à {npc} (carte {tgt}) pour « {name} »"); self.goal = f"guide : « {name} » auprès de {npc}"
         if self.s.map_id != tgt and not self._travel(tgt): return False
         actor = next((a for i in ids for a in [self._find_npc(i)] if a is not None), None)
+        if actor is None and self.s.probe_doors():      # the NPC is inside a building of this map: the door found is learned, look again behind it
+            self.say("info", f"guide de rush : porte trouvée sur la carte {tgt}, je cherche {npc} derrière")
+            self._sleep(2.0); actor = next((a for i in ids for a in [self._find_npc(i)] if a is not None), None)
+            if actor is not None: self.say("info", f"{npc} trouvé sur la carte {self.s.map_id} : à retenir comme carte de départ")
         if actor is None: self.say("warn", f"{npc} introuvable sur la carte {tgt}"); return False
         try: self._act(f"Parler au PNJ {actor}", lambda: self.s._do_talk(actor))
         except RuntimeError as e: self.say("warn", f"dialogue impossible : {e}"); return False
@@ -1839,10 +1890,8 @@ class Autopilot:
         return route(self.s.map_id, goal) is not None
 
     def _refresh_connection(self):
-        """The server hangs up a game connection after ~6-8 min: renew it at a safe moment (not in a fight) once it is older than REFRESH_AFTER. -> True if renewed."""
-        if self.s.status != "connected" or not self.s.since or self.s.in_fight or time.time() - self.s.since <= REFRESH_AFTER: return False
-        self.say("info", f"connexion ouverte depuis {int(time.time() - self.s.since)} s : je la renouvelle avant la coupure du serveur")
-        return bool(self.s.reconnect())
+        """Connection renewal is disabled (the user does not want the bot to reconnect by itself every 5 min): kept so the callers stay valid."""
+        return False
 
     def _travel(self, goal, ask_help=True):
         """Walk/use doors until map `goal` is reached. A step must change the map: if it does not, give up instead of looping."""
@@ -1850,10 +1899,6 @@ class Autopilot:
         for _ in range(MAX_TRAVEL_STEPS):
             cur = self.s.map_id
             if not self._alive(): return False
-            if self.s.status == "connected" and self.s.since and time.time() - self.s.since > REFRESH_AFTER and not self.s.in_fight:      # a long trip: renew the connection before the server hangs up (see the main loop)
-                self.say("info", f"connexion ouverte depuis {int(time.time() - self.s.since)} s : je la renouvelle avant la coupure du serveur")
-                if not self.s.reconnect(): return False
-                prev = None; continue
             if cur == goal: return True
             for _ in range(24):      # the actor list of a new map arrives a moment after jow: without our cell no exit can be planned (and the border would be wrongly noted as blocked)
                 if self.s.my_cell is not None or not self._alive(): break

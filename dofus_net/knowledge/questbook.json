@@ -284,7 +284,7 @@
   },
   "1638": {
    "name": "Cryptologie",
-   "seen": 117,
+   "seen": 323,
    "steps": {
     "2258": {
      "name": "Cryptologie",
@@ -454,7 +454,7 @@
   },
   "1649": {
    "name": "Produits naturels",
-   "seen": 1044,
+   "seen": 1261,
    "steps": {
     "2269": {
      "name": "Produits naturels",
@@ -535,7 +535,7 @@
   },
   "1959": {
    "name": "On marche sur des œufs",
-   "seen": 414,
+   "seen": 454,
    "steps": {
     "2629": {
      "name": "On marche sur des œufs",
@@ -579,7 +579,7 @@
   },
   "1975": {
    "name": "Ça tombe à l'eau",
-   "seen": 1030,
+   "seen": 1247,
    "steps": {
     "2635": {
      "name": "Ça tombe à l'eau",
@@ -619,7 +619,7 @@
   },
   "1978": {
    "name": "Bière qui roule n'amasse pas mousse",
-   "seen": 9,
+   "seen": 12,
    "steps": {
     "2612": {
      "name": "Bière qui roule n'amasse pas mousse",
@@ -632,7 +632,7 @@
   },
   "1979": {
    "name": "Combat de rue",
-   "seen": 654,
+   "seen": 722,
    "steps": {
     "2613": {
      "name": "Combat de rue",
@@ -662,7 +662,7 @@
   },
   "1981": {
    "name": "Déjeuner à la fourchette",
-   "seen": 196,
+   "seen": 254,
    "steps": {
     "2615": {
      "name": "Déjeuner à la fourchette",
@@ -728,9 +728,21 @@
     }
    }
   },
+  "2005": {
+   "name": "Le tour du monde",
+   "seen": 40,
+   "steps": {
+    "2619": {
+     "name": "Le tour du monde",
+     "objectives": {
+      "13795": "Vaincre x1 Tournesol Affamé sur la carte 190318592 en un seul combat"
+     }
+    }
+   }
+  },
   "2009": {
    "name": "Conseil de classe",
-   "seen": 23,
+   "seen": 101,
    "steps": {
     "2631": {
      "name": "Conseil de classe",
@@ -778,6 +790,21 @@
      "name": "Se déplacer",
      "objectives": {
       "19534": "Déplacer votre personnage sur la cellule en surbrillance"
+     }
+    }
+   }
+  },
+  "771": {
+   "name": "Dévotion à Sacrieur",
+   "seen": 46,
+   "steps": {
+    "1394": {
+     "name": "Dévotion à Sacrieur",
+     "objectives": {
+      "4880": "Se téléporter au temple en parlant à l'Envoyée des Douze",
+      "4881": "Aller voir Chaki Triss",
+      "4882": "Lire le livre du temple",
+      "4883": "Retourner voir Envoyée des Douze"
      }
     }
    }
@@ -848,9 +875,9 @@
    "qid": 1632
   },
   "9811": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793363663,
+   "last": 1793814167,
    "map": 152834048,
    "monsters": [
     4046,
@@ -862,9 +889,9 @@
    "qid": 1638
   },
   "9812": {
-   "count": 1,
+   "count": 2,
    "kind": "fight",
-   "last": 1793375051,
+   "last": 1793814241,
    "map": 152835072,
    "monsters": [
     4046,

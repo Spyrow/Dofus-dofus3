@@ -17,7 +17,8 @@ FISH_START_WAIT, FISH_END_WAIT = 12, 45      # seconds to wait for a fishing spo
 
 QUEST_MSGS = {login.ICA, login.ICJ, login.ICB, login.IBG, login.ILX, login.ILF, login.KIS}
 FIGHT_MSGS = {login.JUO, login.JWJ, login.JVJ, login.JTE, login.JUG, login.JSY, login.JTK, login.JSQ, login.JXI, login.JWP}   # JWP was missing: the fight engine never saw the end of a fight
-JOB_MSGS = gamejobs.MESSAGES | {gamestate.IRL, gamestate.IQX}   # harvest / craft / inventory / job experience (see gamejobs.py)
+BANK_MSGS = {"jyf", "iru", "isg", "kbr"}      # bank window opened / stacks left the bag / a stack came back / window closed (see GAME_PROTOCOL.md, Banque)
+JOB_MSGS = gamejobs.MESSAGES | {gamestate.IRL, gamestate.IQX} | BANK_MSGS   # harvest / craft / inventory / job experience (see gamejobs.py)
 KEEP = {login.JNJ, login.JNS, login.JNZ, login.JXI, login.JWP} | QUEST_MSGS | FIGHT_MSGS | JOB_MSGS | {"lof", gamestate.KSC, gamestate.KRG, gamestate.IRL, gamestate.IQX, gamestate.IPE, gamestate.ISM, gamestate.JOW}
 RECONNECT_PAUSES = (3, 15, 30, 60, 120, 180, 240, 300, 420, 600)
 MAX_SUPERVISED_FAILURES = 8     # failed automatic reconnections (each one already waits through RECONNECT_PAUSES) before giving up
@@ -52,7 +53,7 @@ class Session:
         self.fight_ctx = None   # challenges.Context: what the next fight is for (set by the autopilot just before it attacks, consumed by the fight)
         self._icj_events = {}; self._dlg = None; self._done = collections.deque(maxlen=60)   # dialog being recorded; (time, quest, objective) accomplished lately
         self._probe_reset = set(); self.level = None; self.finished_quests = set(); self.npcs = {}; self.quests = {}; self.dialog = None   # actor id -> template id; quest id -> (step, objectives); open dialog
-        self._dialog_event = threading.Event(); self.recent = collections.deque(maxlen=200)   # (time, message type) of everything received
+        self._bank_open, self._bank_gone, self._bank_closed = threading.Event(), threading.Event(), threading.Event(); self._dialog_event = threading.Event(); self.recent = collections.deque(maxlen=200)   # (time, message type) of everything received
         self._act = threading.Lock(); self.busy = None; self._moved = threading.Event(); self._mapchanged = threading.Event()
         self._stop = threading.Event(); self._thread = None; self._lock = threading.RLock()
         self.keep_alive = False; self.resume_auto = None; self._supervisor = None   # supervisor: reconnects after a crash; resume_auto: autopilot arguments to restart with
@@ -267,9 +268,34 @@ class Session:
             b = knowledge.load("banks.json", [])
             if map_id not in b: b.append(map_id); knowledge.save("banks.json", b)
 
-    def bank_deposit(self):
-        """Put the resources of the bag into the bank (talk to the banker, move the stacks). NOT IMPLEMENTED: the messages of the bank window were never captured."""
-        raise RuntimeError("dépôt en banque impossible : les messages du coffre n'ont pas encore été capturés (voir GAME_PROTOCOL.md)")
+    def bank_deposit(self, keep=()):
+        """Empty the resources of the bag into the bank (protocol captured on 2026-11-04, GAME_PROTOCOL.md "Banque"): talk to the banker, pick the reply
+        that opens the vault, send `jyk {1: packed stack uid}` for each resource stack (the server answers iru, iqq, itn), close with `kiq`.
+        keep: item ids to leave in the bag. -> number of stacks deposited. Raises RuntimeError."""
+        with self._lock: bankers = [a for a, tpl in self.npcs.items() if "banquier" in gamejobs.norm(gamedata.quest_data("npcs", tpl))]
+        if not bankers: raise RuntimeError("aucun banquier sur cette carte")
+        self._bank_open.clear()
+        self._do_talk(bankers[0])
+        with self._lock: reps = list((self.dialog or {}).get("replies", []))
+        pick = next((r for r in reps if re.search(r"coffre|banque|acc[ée]der|ouvrir", gamejobs.norm(r.get("text")))), reps[0] if reps else None)
+        if pick is None: raise RuntimeError("le banquier ne propose aucune réponse")
+        self._do_reply(pick["id"])
+        if not self._bank_open.wait(5): raise RuntimeError("le coffre ne s'est pas ouvert (kamas insuffisants pour l'accès ?)")
+        with self._lock:
+            stacks = [u for u, (g, _q) in self.inv.items() if g not in keep and gamestate.item_category((gamedata.get("items", g) or {}).get("type")) == "ressource"]
+        n = 0
+        try:
+            for u in stacks:
+                self._bank_gone.clear()
+                self._send("jyk", f_bytes(1, enc_varint(u)))
+                if not self._bank_gone.wait(5): self.log("warn", f"banque : la pile {u} n'a pas été acceptée"); continue
+                n += 1; time.sleep(0.3)
+        finally:
+            self._bank_closed.clear()
+            try: self._send("kiq"); self._bank_closed.wait(3)
+            except RuntimeError: pass
+        self.log("event", f"Banque : {n} pile(s) de ressources déposée(s)")
+        return n
 
     def _note_monsters(self, mons):
         """Remember where each monster was seen (knowledge/monster_seen.json): the zone data lacks some of them (Incarnam's Bouftou)."""
@@ -297,6 +323,20 @@ class Session:
             with self._lock:
                 for it in gamestate.inventory_items(body, True):
                     if it["uid"] is not None: self.inv[it["uid"]] = [it["gid"], it["qty"]]; self.inv_fx[it["uid"]] = it["effects"]
+        elif t == "jyf": self._bank_open.set()
+        elif t == "kbr": self._bank_closed.set()
+        elif t == "iru":      # {1: packed varints}: the stacks that left the bag (deposited)
+            raw = gamejobs._sub(body, 1); i = 0; uids = []
+            while i < len(raw): u, i = dec_varint(raw, i); uids.append(u)
+            with self._lock:
+                for u in uids: self.inv.pop(u, None); self.inv_fx.pop(u, None)
+            self._bank_gone.set()
+        elif t == "isg":      # {1: {1: {3: quantity, 4: item id, 5: stack uid}, 4: position}}: a stack back in the bag (withdrawn)
+            it = gamejobs._sub(gamejobs._sub(body, 1), 1)
+            if it:
+                uid, gid, qty = gamejobs._int(it, 5), gamejobs._int(it, 4), gamejobs._int(it, 3)
+                if uid is not None and gid is not None:
+                    with self._lock: self.inv[uid] = [gid, qty if qty is not None else 1]
         elif t == gamejobs.IRX:
             sq = gamejobs.stack_quantity(body)
             with self._lock:

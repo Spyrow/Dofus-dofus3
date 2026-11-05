@@ -32,7 +32,13 @@ def quest_data(table, key):
         try:
             with open(os.path.join(os.path.dirname(PATH), "questdata.json"), encoding="utf8") as f: _quest = json.load(f)
         except (OSError, ValueError): _quest = {}
-    return _quest.get(table, {}).get(str(key))
+    r = _quest.get(table, {}).get(str(key))
+    if table == "objectives" and r and r.get("map") and int(r["map"]) in MAP_TWINS: r = dict(r, map=MAP_TWINS[int(r["map"])])
+    return r
+
+
+# Quest objectives that name a variant of a room (same place, other map id: phased / quest-state copies) that no door leads to: the playable twin.
+MAP_TWINS = {}      # (was {698: 696}: wrong, 192413698 is the upstairs room where Huze Belli stands)
 
 
 def npc_ids_named(name):
