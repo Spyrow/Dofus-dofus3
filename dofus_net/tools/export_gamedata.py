@@ -46,10 +46,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--game"); ap.add_argument("--lang", default="fr")
     ap.add_argument("--only-challenges", action="store_true", help="merge the challenges table into the existing gamedata.json, rebuild nothing else")
+    ap.add_argument("--only-monsters", action="store_true", help="write just monsters.json (levels, zones, drops: client/farmroute.py)")
     a = ap.parse_args()
     game = a.game or next((g for g in GAME_DIRS if os.path.isdir(g)), None) or sys.exit("game folder not found: use --game")
     content = os.path.join(game, "Dofus_Data", "StreamingAssets", "Content")
     t = I18n(os.path.join(content, "I18n", a.lang + ".bin")); dd = os.path.join(content, "Data")
+    if a.only_monsters: export_monsters(dd, t); return
     if a.only_challenges:
         try:
             with open(OUT, encoding="utf-8") as f: out = json.load(f)
@@ -92,6 +94,7 @@ def main():
     with open(OUT, "w", encoding="utf-8") as f: json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
     print({k: len(v) for k, v in out.items() if isinstance(v, dict)}, "->", OUT)
     export_quests(dd, t)
+    export_monsters(dd, t)
 
 
 def export_challenges(dd, t):
@@ -100,6 +103,21 @@ def export_challenges(dd, t):
     (dungeon bosses: Duo, Trio, scripted ones with the criterion `Ma=1`). The criterion strings are the game's own mini-language (see client/challenges.py)."""
     return {k: [t(v["nameId"]), t(v["descriptionId"]), v["categoryId"], v["completionCriterion"], v["activationCriterion"], v["targetMonsterId"]]
             for k, v in table(dd, "challenges").items()}
+
+
+def export_monsters(dd, t):
+    """Monsters -> %APPDATA%/dofus_net/monsters.json (read by client/farmroute.py): id -> {name, lv: [lowest, highest grade level], sub: [sub area ids where it
+    lives], drops: [[item id, percent at grade 1]]} (drops that need a criterion are kept: they only apply to some players)."""
+    out = {}
+    for k, v in table(dd, "monsters").items():
+        name = t(v["nameId"]); grades = v.get("grades") or []
+        if not name or not grades: continue
+        lv = [g["level"] for g in grades]
+        out[k] = {"name": name, "lv": [min(lv), max(lv)], "sub": v.get("subareas") or [],
+                  "drops": [[d["objectId"], round(d["percentDropForGrade1"], 2)] for d in v.get("drops") or [] if d.get("percentDropForGrade1")]}
+    path = os.path.join(os.path.dirname(OUT), "monsters.json")
+    with open(path, "w", encoding="utf-8") as f: json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+    print(len(out), "monsters ->", path)
 
 
 def export_quests(dd, t):
